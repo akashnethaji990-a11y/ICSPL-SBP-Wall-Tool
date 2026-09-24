@@ -1,0 +1,5 @@
+title: "SBP\nLine"
+tooltip: >-
+  Show the hidden line of an SBP wall so you can move or reshape it (then run SBP Edit),
+  or hide it again.
+author: Akash

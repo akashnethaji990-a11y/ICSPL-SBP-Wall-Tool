@@ -1,0 +1,5 @@
+title: "SBP\nWall"
+tooltip: >-
+  Select a line (straight, arc, circle, spline or connected chain), set the values,
+  click the wall side. Places ICSPL_Pile HARD/SOFT piles offset by gap + D/2.
+author: Akash
