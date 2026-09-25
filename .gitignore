@@ -1,1 +1,5 @@
 /TESTING MODEL
+
+# Python caches (from the offline tests)
+__pycache__/
+*.pyc

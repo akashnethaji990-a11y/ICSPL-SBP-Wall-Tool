@@ -90,6 +90,8 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
   - `SBP Edit.pushbutton`, `SBP Select.pushbutton`, `SBP Line.pushbutton`: new 25 Sep (see HISTORY §11).
   - `SBP Count.pushbutton`: counts HARD/SOFT per wall.
 - `tests/test_sbp_geom.py`, `tests/test_sbp_data.py`: offline tests. Run with `python tests/<file>`.
+- Button icons: `icon.png` (light Revit theme) + `icon.dark.png` (dark theme) in each `.pushbutton`,
+  made by `tools/make_icons.py` (edit the SVGs there, run it, then pyRevit → Reload).
 - `preview/ui_preview.py`: tkinter mock-up of the SBP Wall form (no Revit). Run it with
   `python preview\ui_preview.py`, and keep it in sync with the form.
 - `ref/soft_web_200_min.png`: Akash's reference drawing for the soft web rule.
@@ -147,8 +149,15 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
   - The invisible-line fix is still unverified.
   - The v2 spacing rules (R2–R7) are on hold for the senior review of the drawing
     (https://claude.ai/artifact/ViXBhGCCNzFRQXTaJVkP1N) and the A/B question.
-- **Exact next step:** Akash clicks pyRevit → Reload in Revit, then runs the §11 checklist in
-  `TESTING MODEL\SBP TEST MODEL.rvt` and sends screenshots of each report. Fix what fails. Then,
-  when he brings back the seniors' answer, continue with v2.
+- **Exact next step (morning of 26 Sep):**
+  1. §11 step 1 passed (26 Sep); icons added (HISTORY §13). Akash reloads, then runs §11 steps 2–8 in
+     `TESTING MODEL\SBP TEST MODEL.rvt` and sends screenshots of each report. Fix what fails.
+  2. **New request (HISTORY §12):** SBP Wall should open a Modify | Place tab with the Draw tools
+     (Line, Arc, Circle, Spline, Pick Lines), like Revit's Wall tool, instead of drawing a Model
+     Line first. Research `PostCommand(ModelLine)` + a hand-off (two clicks / DocumentChanged-Idling
+     hook / 'SBP Line' style), then show him the options before coding.
+  3. When he brings back the seniors' answer on the drawing, continue with v2.
+- Git: repo on branch `main`; the initial commit c1ca1d8 has all the 25 Sep code. Caches are now in
+  `.gitignore` and the .pyc files are untracked (26 Sep, not committed yet).
 - Walkthrough preview of the buttons: https://claude.ai/artifact/MEb9pt9aLst1mHvLNRSsRB.
 - Later ideas: schedules, an SBP Delete button, renaming a wall.

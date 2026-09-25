@@ -376,3 +376,48 @@ Where does the corner SOFT pile go?
    SBP1-H0xx (HARD), next pile SOFT".
 8. Select piles of SBP1 and SBP2 → SBP Edit → change toe SOFT → both are updated.
 Send a screenshot of each report, and of any error.
+
+## 12. New request (25 Sep, night): draw the line inside SBP Wall, like Revit's Wall tool
+**Akash:**
+- He doesn't want to draw a Model Line first.
+- Clicking **SBP Wall** should open a **Modify | Place** tab with the Draw tools, exactly like
+  Revit's own Wall tool: Line, Arc, Circle, Spline, **Pick Lines**...
+- The SBP wall is then made from what he draws. "This one will make it way easier."
+
+**Claude's first thoughts (NOT decided; research in the morning, then show him options):**
+- A pyRevit button can't host its own Draw panel. It can start Revit's own Model Line tool with
+  `UIApplication.PostCommand(PostableCommand.ModelLine)`, which shows the Modify | Place Lines tab with
+  every Draw option, including Pick Lines.
+- The difficulty: a posted command starts only after the script ends, so the tool must notice when
+  drawing is finished. Possible ways:
+  - (a) two clicks: SBP Wall → draw → Finish/Esc → SBP Wall again picks up the new lines by itself
+    (no selecting);
+  - (b) fully automatic: a DocumentChanged/Idling event (pyRevit hook or ExternalEvent) opens the SBP
+    form as soon as the line tool ends;
+  - (c) draw with a dedicated line style "SBP Line", so the tool always knows which lines are wall
+    lines.
+- Check in Revit 2026 + pyRevit 5.2 which of these works reliably before promising anything.
+
+**Status when saved:** nothing coded for this. The first Revit test of the 25 Sep code (§11 checklist)
+is still step 1.
+
+**Git:** Akash made the repo; the "Initial commit" (c1ca1d8, 25 Sep 03:04) holds all the 25 Sep code.
+The `lib/__pycache__/*.pyc` files (from the offline tests) were committed by mistake; add
+`__pycache__/` to `.gitignore`.
+
+## 13. 26 Sep: ribbon icons
+- After pyRevit → Reload, Akash's SBP tab showed the 5 buttons in order: Wall, Edit, Select, Line, Count
+  (**§11 checklist step 1 passed**). They were text only, and he asked for icons like the preview.
+- Added `icon.png` (dark lines, for Revit's light theme) and `icon.dark.png` (light lines, for his dark
+  theme; pyRevit 5.2 picks it automatically) to each button folder. The designs are from the walkthrough,
+  without the "NEW" badges:
+  - Wall: line over H-S-H piles;
+  - Edit: pile + pencil;
+  - Select: dashed box;
+  - Line: dashed line with grips;
+  - Count: list.
+- They are made by `tools/make_icons.py` (SVG → PNG with headless Edge, 96×96, transparent). Edit the SVG
+  in that file and run `python tools/make_icons.py` to change them.
+- `.gitignore` now ignores `__pycache__/` and `*.pyc`, and the two committed .pyc files were untracked
+  (`git rm --cached`). Not committed yet.
+- Next: Akash reloads to see the icons, then runs §11 steps 2–8.
