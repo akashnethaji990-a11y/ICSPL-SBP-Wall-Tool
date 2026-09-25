@@ -1,6 +1,6 @@
 title: "SBP\nEdit"
 tooltip: >-
-  Click any pile(s) of one or more SBP walls and change the values in one go.
-  Cut-off / Toe only: the same piles are kept. Spacing, gap, type, level or a moved line:
-  the wall is rebuilt and typed pile data is copied to the nearest new pile.
+  Click piles of one or more SBP walls, Finish, change the values, Apply. It then asks for the
+  next piles until you press Esc. Cut-off / Toe only: same piles kept. Spacing, gap, type,
+  level or a moved line: the wall is rebuilt and typed pile data is copied to the nearest new pile.
 author: Akash

@@ -118,6 +118,74 @@ def remove_loops(pts, window):
     return dedupe(res, 1e-9)
 
 
+# ---------------------------------------------------------------- reference planes -> one chain
+def _line_cross(a, b, c, d):
+    """Crossing point of the (endless) lines through ab and cd, or None if parallel."""
+    r = (b[0] - a[0], b[1] - a[1])
+    s = (d[0] - c[0], d[1] - c[1])
+    den = r[0] * s[1] - r[1] * s[0]
+    if abs(den) < 1e-9 * math.hypot(*r) * math.hypot(*s):
+        return None
+    t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den
+    return (a[0] + t * r[0], a[1] + t * r[1])
+
+
+def _near_segment(p, seg, reach):
+    """p (on the segment's line) lies on the segment or within `reach` beyond its ends."""
+    (a, b) = seg
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / (L * L)
+    return -reach / L <= t <= 1 + reach / L
+
+
+def chain_from_lines(segs, reach):
+    """Order straight segments (e.g. reference planes seen in plan) into one wall line.
+
+    Two segments are neighbours when their lines cross on both of them (or within `reach`
+    beyond their ends). Ends of an open chain keep the far end of the first/last segment;
+    the corners are the crossing points. Every segment crossing two others -> closed loop.
+    segs: [((x0, y0), (x1, y1))]. Returns (points, closed). Raises ValueError for the user.
+    """
+    n = len(segs)
+    for a, b in segs:
+        if math.hypot(b[0] - a[0], b[1] - a[1]) <= 1e-9:
+            raise ValueError("A reference plane has no length in plan (is it horizontal?).")
+    if n == 1:
+        return [segs[0][0], segs[0][1]], False
+    cross = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            p = _line_cross(segs[i][0], segs[i][1], segs[j][0], segs[j][1])
+            if p is not None and _near_segment(p, segs[i], reach) and _near_segment(p, segs[j], reach):
+                cross[(i, j)] = cross[(j, i)] = p
+    nb = dict((i, [j for j in range(n) if (i, j) in cross]) for i in range(n))
+    if any(len(v) > 2 for v in nb.values()):
+        raise ValueError("A reference plane crosses more than two of the others. Select only the planes of one wall.")
+    if any(len(v) == 0 for v in nb.values()):
+        raise ValueError("A reference plane does not meet any of the others. Select planes that cross at the corners.")
+    ends = [i for i in range(n) if len(nb[i]) == 1]
+    if len(ends) not in (0, 2):
+        raise ValueError("The reference planes do not form one chain.")
+    closed = not ends
+    order, prev, cur = [ends[0] if ends else 0], None, ends[0] if ends else 0
+    while len(order) < n:
+        nxt = [j for j in nb[cur] if j != prev and j not in order]
+        if not nxt:
+            break
+        prev, cur = cur, nxt[0]
+        order.append(cur)
+    if len(order) != n:
+        raise ValueError("The reference planes do not form one chain.")
+    corners = [cross[(order[k], order[k + 1])] for k in range(n - 1)]
+    if closed:
+        return [cross[(order[-1], order[0])]] + corners, True
+
+    def far_end(seg, p):
+        a, b = seg
+        return a if math.hypot(a[0] - p[0], a[1] - p[1]) > math.hypot(b[0] - p[0], b[1] - p[1]) else b
+    return [far_end(segs[order[0]], corners[0])] + corners + [far_end(segs[order[-1]], corners[-1])], False
+
+
 # ---------------------------------------------------------------- division
 def path_length(pts, closed):
     p = pts + [pts[0]] if closed else pts

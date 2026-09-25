@@ -18,6 +18,8 @@
 | **SBP Count** | Click | HARD / SOFT / TOTAL for every wall |
 
 ## Everyday workflow
+- **Wall from reference planes:** select the planes (they should cross at the corners), click SBP Wall.
+- **Edit several things in a row:** SBP Edit keeps asking for the next piles after Apply; press Esc when done.
 - **New wall:** click SBP Wall → draw with the Draw tools (the tab says "Modify | Place Lines") → Modify/Esc → fill the form → click the wall side. Draw one connected chain per wall.
 - **Levels change** (e.g. cut-off −150 → −300): click any pile → SBP Edit → change → OK.
 - **Spacing change:** SBP Edit → change c/c → confirm the rebuild.
@@ -27,6 +29,11 @@
 - **Walls made before SBP Edit existed:** run SBP Wall once on the line with the same wall name.
 
 ## Rules
+- **SBP Wall never deletes piles.** It suggests the next free wall name (SBP1, SBP2 ...). To change a wall use
+  SBP Edit; to delete one, delete its piles by hand.
+- **SOFT piles are cut by HARD piles** (Join Geometry, HARD cuts): HARD piles keep their full round shape.
+- **Pick Lines** (in the Draw panel): Tab picks a whole chain; finish with Esc twice or Modify. To pick CAD
+  lines, turn on Select links / Select pinned elements (bottom right of Revit).
 - Line → SBP centre line = gap + D/2 (default 150 + 600 = 750). Gap min 150.
 - Spacing is measured on the centre line and rounded so the real c/c is never larger than
   what you entered (overlap never less than design).

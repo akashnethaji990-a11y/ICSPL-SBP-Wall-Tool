@@ -18,7 +18,7 @@ __persistentengine__ = True     # keeps the "drawing finished" handler (sbp_draw
 import os
 import json
 
-from Autodesk.Revit.DB import Transaction, ViewPlan, ElementId, CurveElement
+from Autodesk.Revit.DB import Transaction, ViewPlan, ElementId, CurveElement, ReferencePlane
 
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
@@ -66,16 +66,26 @@ def fail(msg):
     forms.alert(msg, title="SBP Wall", exitscript=True)
 
 
-def get_curve_elements():
-    """1. lines selected before clicking, 2. lines just drawn with the Draw tools, 3. start drawing."""
+def get_line_source():
+    """(items, closed) of the wall line, from (in this order):
+    1. lines selected before clicking, 2. reference planes selected before clicking,
+    3. lines just drawn with the Draw tools, 4. otherwise start drawing.
+    Items from reference planes have no line element yet (made with the wall)."""
     pre = [doc.GetElement(i) for i in uidoc.Selection.GetElementIds()]
-    pre = [e for e in pre if isinstance(e, CurveElement)]
-    if pre:
+    curves = [e for e in pre if isinstance(e, CurveElement)]
+    planes = [e for e in pre if isinstance(e, ReferencePlane)]
+    if curves or planes:
         sbp_draw.stop(__revit__)
-        return pre
-    drawn = sbp_draw.take_drawn(doc)
-    if drawn:
-        return drawn
+    try:
+        if curves:
+            return SR.build_chain(curves)
+        if planes:
+            return SR.plane_chain(planes, doc.ActiveView)
+        drawn = sbp_draw.take_drawn(doc)
+        if drawn:
+            return SR.build_chain(drawn)
+    except ValueError as ex:
+        fail(str(ex))
     # Nothing selected: open Revit's Modify | Place Lines tab (Draw panel). When the drafter finishes
     # (Modify / Esc), sbp_draw runs SBP Wall again with the new lines.
     sbp_draw.start_draw(__revit__, doc)
@@ -103,6 +113,13 @@ def ask_kind(end, mark):
 def allow_template(name):
     return forms.alert("This view's template '{}' controls filters.\n\nAdd the SBP HARD/SOFT filters to the "
                        "template? Every view that uses it will show them.".format(name),
+                       title="SBP Wall", yes=True, no=True)
+
+
+def allow_template_lines(name):
+    return forms.alert("Revit refused <Invisible lines> for your line, so it uses the line style '{}'.\n"
+                       "This view's template '{}' controls line visibility.\n\nTurn '{}' off in the template? "
+                       "Every view that uses it will hide these lines.".format(SR.SBP_LINE_STYLE, name, SR.SBP_LINE_STYLE),
                        title="SBP Wall", yes=True, no=True)
 
 
@@ -173,19 +190,19 @@ if not types:
     fail("Family '{}' is not loaded in this project.".format(SR.FAMILY_NAME))
 levels = SR.all_levels(doc)
 
-elements = get_curve_elements()
-if not elements:
-    script.exit()
-try:
-    items, closed = SR.build_chain(elements)
-except ValueError as ex:
-    fail(str(ex))
+items, closed = get_line_source()
 
 cfg = load_cfg()
+used = SR.wall_names(doc)
+cfg["wall"] = SD.next_free_name(cfg.get("wall"), used)     # SBP Wall never reuses a name
 gl = doc.ActiveView.GenLevel
 inp = ask_inputs(cfg, types, levels, gl.Name if gl else cfg["level"])
 
-wall = inp["wall"] or "SBP1"
+wall = inp["wall"] or cfg["wall"]
+if wall in used:
+    fail("Wall '{}' already exists. SBP Wall never deletes or replaces piles.\n\n"
+         "- To change that wall, use SBP Edit.\n"
+         "- For a new wall, use another name (next free: {}).".format(wall, SD.next_free_name(wall, used)))
 s = {
     "spacing": num(inp["spacing"], "c/c spacing"),
     "gap": num(inp["gap"], "Gap"),
@@ -207,24 +224,20 @@ save_cfg({
     "toe_hard": inp["toe_hard"], "toe_soft": inp["toe_soft"], "invisible": s["invisible"],
 })
 
-old = SR.wall_piles(doc, wall)
-if old:
-    if not forms.alert("{} piles already exist with marks '{}-...'.\nDelete them and rebuild?\n\n"
-                       "Typed data (Loading, BH Ref ...) is copied to the nearest new pile of the same type."
-                       .format(len(old), wall), yes=True, no=True):
-        script.exit()
-saved = SR.load_walls(doc).get(wall)
-
 try:
     pk = uidoc.Selection.PickPoint("Click on the side of the line where the SBP wall should go")
 except OperationCanceledException:
     script.exit()
 side = G.pick_side(SR.chain_samples(items), (pk.X, pk.Y))
-styles = SR.visible_styles(elements, saved[1].get("line_styles") if saved else None)
 
 t = Transaction(doc, "SBP Wall - " + wall)
 t.Start()
 try:
+    # --- model lines along reference planes are made now (not earlier: a cancel leaves nothing behind)
+    items = SR.make_model_lines(doc, items)
+    elements = [e for c, e, r in items]
+    styles = SR.visible_styles(elements)
+
     # --- read the real diameter from the type (probe instance)
     p0 = items[0][0].GetEndPoint(0)
     D = SR.probe_diameter(doc, symbol, level, (p0.X, p0.Y))
@@ -233,48 +246,45 @@ try:
         raise Exception("c/c spacing ({:.0f}) must be less than pile diameter ({:.0f}) so the piles overlap.".format(s["spacing"], D_mm))
 
     # --- pile positions (joins to other SBP walls decide the pile type at each end)
-    others = [fi for fi in SR.all_piles(doc) if SR.wall_of(fi) != wall]
+    others = SR.all_piles(doc)
     centres, kinds, info = SR.plan_wall(doc, items, closed, side, s, D, others, ask_kind)
     if not centres:
         raise Exception("No piles to place: the line is too short.")
-
-    # --- replace the previous piles of this wall (keep their typed data)
-    snap = SR.snapshot_data(old) if old else []
-    for fi, k in old:
-        doc.Delete(fi.Id)
     placed = SR.place_piles(doc, symbol, level, wall, centres, kinds)
 
     # --- set Cut-off / Toe (calibrated against what Revit displays)
     check = SR.apply_levels(doc, placed, s["cutoff"], s["toe_hard"], s["toe_soft"])
-    copied, lost = SR.restore_data(snap, placed)
 
-    # --- make the drawn line invisible
-    line_errors = SR.hide_lines(doc, elements) if s["invisible"] else []
+    # --- make the drawn line invisible (<Invisible lines>, else our 'SBP Invisible' style turned off)
+    line_errors = SR.hide_lines(doc, elements, doc.ActiveView, allow_template_lines) if s["invisible"] else []
 
     # --- remember everything, so SBP Edit can change the wall later
-    SR.save_wall(doc, SR.wall_data(wall, symbol, level, s, items, closed, side, styles), saved[0] if saved else None)
+    SR.save_wall(doc, SR.wall_data(wall, symbol, level, s, items, closed, side, styles))
     t.Commit()
 except Exception as ex:
     if t.HasStarted() and not t.HasEnded():
         t.RollBack()
     fail("Nothing was placed.\n\n{}".format(ex))
 
-# --- HARD / SOFT look (separate step: a problem here never undoes the piles)
+# --- SOFT piles cut by HARD piles + HARD/SOFT look (separate step: never undoes the piles)
 look = {}
-tg = Transaction(doc, "SBP Wall - HARD/SOFT look")
+tg = Transaction(doc, "SBP Wall - cut SOFT piles, HARD/SOFT look")
 tg.Start()
 try:
+    joined, jfail, jerr = SR.cut_soft_by_hard(doc, SR.hard_soft_pairs(placed, closed, info["ends"]))
+    look["cut"] = "{} overlaps joined (HARD cuts SOFT)".format(joined) + (
+        ", {} failed: {}".format(jfail, jerr) if jfail else "")
     look["2D"] = SR.apply_view_filters(doc, doc.ActiveView, allow_template)
     look["3D"] = SR.set_material(doc, [fi for fi, k in placed])
     tg.Commit()
 except Exception as ex:
     if tg.HasStarted() and not tg.HasEnded():
         tg.RollBack()
-    look = {"2D": "not applied: {}".format(ex), "3D": "not applied"}
+    look = {"cut": "not done: {}".format(ex), "2D": "not applied", "3D": "not applied"}
 
 uidoc.Selection.SetElementIds(List[ElementId]([fi.Id for fi, _ in placed]))
 
-# ------------------------------------------------------------------ report
+# ------------------------------------------------------------------ report (html(): keeps <...> visible)
 nh = sum(1 for k in kinds if k == SR.HARD)
 ns = len(kinds) - nh
 rows = [
@@ -298,19 +308,12 @@ rows += [
     ["Cut-off / Toe SOFT (mm)", "{:.0f} / {:.0f}".format(*check.get(SR.SOFT, (0, 0)))],
     ["Drawn line", "left as is" if not s["invisible"] else
      ("NOT made invisible (see below)" if line_errors else "<Invisible lines>")],
+    ["SOFT piles cut", look["cut"]],
     ["Settings saved with the wall", "Yes (SBP Edit can change this wall)"],
     ["HARD/SOFT look (2D)", look["2D"]],
     ["Material (3D)", look["3D"]],
 ]
-if old:
-    rows.append(["Typed data copied", "{} piles".format(len(copied)) + (", {} not copied".format(len(lost)) if lost else "")])
-output.print_md("## SBP Wall **{}**".format(wall))
-output.print_table(table_data=rows, columns=["Item", "Value"])
+output.print_md("## SBP Wall **{}**".format(SR.html(wall)))
+output.print_table(table_data=[[SR.html(a), SR.html(b)] for a, b in rows], columns=["Item", "Value"])
 for msg in line_errors:
-    output.print_md("**Line style problem:** {}".format(msg))
-far = [c for c in copied if c[2] > s["spacing"] / 2.0]
-if far:
-    output.print_md("**Typed data that moved more than half a c/c:** " +
-                    ", ".join("{} -> {} ({:.0f} mm)".format(a, b, d) for a, b, d in far))
-if lost:
-    output.print_md("**Typed data NOT copied (no pile of the same type left):** " + ", ".join(lost))
+    output.print_md("**Line style:** {}".format(SR.html(msg)))

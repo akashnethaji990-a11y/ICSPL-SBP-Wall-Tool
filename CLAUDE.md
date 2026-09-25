@@ -104,6 +104,17 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
 ## Current logic (what the code does NOW: v1 spacing + editable walls, 25 Sep)
 - Marks are `SBP1-H001` / `SBP1-S001`; Comments are `HARD PILE` / `SOFT PILE`. A wall's piles are
   found by exact wall name (`SBP1` never picks `SBP1-A`).
+- **SBP Wall never deletes or replaces piles** (26 Sep): the name field suggests the next free name, and
+  an existing name is refused. Changing a wall = SBP Edit. Deleting = by hand.
+- **Line sources for SBP Wall:** selected lines, **selected reference planes** (trimmed at their crossings,
+  model lines made inside the wall transaction), lines just drawn with Revit's Draw tools, else start drawing.
+- **Invisible line:** `<Invisible lines>`, else our line style `SBP Invisible` (added if missing) turned off in
+  the view (asks before changing a template), else hide in the view.
+- **SBP Edit loops:** select, Finish, form, Apply, next piles ... Esc ends (26 Sep, HISTORY section 16).
+- **SOFT piles are cut by HARD piles** with Join Geometry (HARD cuts), done in SBP Wall and after SBP Edit
+  rebuilds (not yet verified in Revit).
+- Report text goes through `SR.html()` (pyRevit hides `<...>`). Invisible lines: Category.GetCategory
+  → fallback: hide in the current view. Draw hand-off log: `%APPDATA%\SBPTool\draw_log.txt`.
 - Spacing: equal spacing over the whole centre line, interval count rounded UP. There are no corner
   piles and outside corners are rounded (the v2 corner rules are on hold).
 - **Wall ends (Akash's rule):**

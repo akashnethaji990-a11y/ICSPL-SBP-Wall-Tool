@@ -9,6 +9,7 @@ All lengths are in mm unless a function says otherwise.
 """
 import json
 import math
+import re
 
 VERSION = 1
 NUM_KEYS = ("spacing", "gap", "cutoff", "toe_hard", "toe_soft")
@@ -80,11 +81,12 @@ def same_layout(old, new, tol):
 
 
 # ---------------------------------------------------------------- typed data after a rebuild
-def match_nearest(old, new):
+def match_nearest(old, new, max_dist=None):
     """Where typed data goes after a rebuild.
 
     old/new: lists of (x, y, kind). Each old pile is matched to the nearest new pile of
     the same type. If two old piles pick the same new pile, the closer one wins.
+    max_dist: never copy further than this (the wall was moved far away: data is not copied).
     Returns (matches, lost): matches = {old_index: (new_index, distance)}, lost = [old_index].
     """
     best = {}
@@ -96,7 +98,7 @@ def match_nearest(old, new):
             d = math.hypot(nx - ox, ny - oy)
             if dist is None or d < dist:
                 pick, dist = j, d
-        if pick is not None:
+        if pick is not None and (max_dist is None or dist <= max_dist):
             best[i] = (pick, dist)
     owner = {}
     for i, (j, d) in best.items():
@@ -105,6 +107,21 @@ def match_nearest(old, new):
     matches = dict((i, best[i]) for i in owner.values())
     lost = sorted(i for i in range(len(old)) if i not in matches)
     return matches, lost
+
+
+# ---------------------------------------------------------------- wall names
+def next_free_name(name, used):
+    """'SBP1' if it is free, else 'SBP2', 'SBP3' ... (keeps the prefix). SBP Wall never reuses a name."""
+    name = (name or "").strip() or "SBP1"
+    if name not in used:
+        return name
+    m = re.match(r"^(.*?)(\d+)$", name)
+    base, n = (m.group(1), int(m.group(2))) if m else (name, 1)
+    while True:
+        n += 1
+        cand = "{}{}".format(base, n)
+        if cand not in used:
+            return cand
 
 
 # ---------------------------------------------------------------- joining another wall

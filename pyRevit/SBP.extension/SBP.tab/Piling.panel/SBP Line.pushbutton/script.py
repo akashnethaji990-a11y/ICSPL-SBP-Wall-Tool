@@ -50,11 +50,12 @@ for n in names:
 if not lines:
     fail("The drawn line of {} was deleted.".format(", ".join(names)))
 
-show = any(SR.is_invisible(e) for e in lines)
+view = doc.ActiveView
+show = any(SR.is_invisible(e) for e in lines) or SR.is_hidden_in(view, lines)
 t = Transaction(doc, "SBP Line - " + ("show" if show else "hide"))
 t.Start()
 try:
-    errs = SR.show_lines(doc, lines, styles) if show else SR.hide_lines(doc, lines)
+    errs = SR.show_lines(doc, lines, styles, view) if show else SR.hide_lines(doc, lines, view)
     t.Commit()
 except Exception as ex:
     if t.HasStarted() and not t.HasEnded():

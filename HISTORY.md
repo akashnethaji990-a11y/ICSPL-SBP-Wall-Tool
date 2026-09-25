@@ -452,3 +452,99 @@ The `lib/__pycache__/*.pyc` files (from the offline tests) were committed by mis
   5. Select an existing line → SBP Wall → works as before.
   6. If the form does not open by itself after drawing, click SBP Wall once more: it picks up the lines
      just drawn. Tell Claude, since it means the automatic hand-off is not working.
+
+## 15. 26 Sep: Akash's Revit test of draw mode, and fixes
+**Test results:**
+1. The Draw panel opens: OK.
+2. Draw chain → the form opens by itself: OK.
+3. Rectangle and Spline: OK. **Pick Lines:** after picking, Enter/Esc did nothing. He can pick only
+   element edges, but wants all kinds (lines, ref lines, imported CAD lines) plus **Tab** chain
+   selection.
+4. Esc without drawing: OK.
+
+**Reported problems → what changed:**
+- **"Line style problem" lines** in the report:
+  - The report hid `<...>` text as HTML, so `<Invisible lines>` and the other bracketed style names
+    showed as blanks.
+  - The tool also did not find the invisible style for his model lines.
+  - Fix: `invisible_style()` now takes `Category.GetCategory(doc, OST_InvisibleLines)` →
+    GraphicsStyle, then the Lines sub-categories, then `GetLineStyleIds()`.
+  - If Revit refuses the style, the lines are hidden in the current view instead
+    (`view.HideElements`), and the report says so.
+  - All report text goes through `SR.html()`.
+  - SBP Line shows lines hidden this way again (`UnhideElements`).
+- **"15 piles already exist ... Delete them and rebuild?"** every time he made a new wall:
+  - The form reused the last name (SBP1), and SBP Wall treated that as a rebuild. That is also why
+    typed data "moved 26–33 m".
+  - Fix: **SBP Wall never deletes or replaces piles.** The name field suggests the next free name
+    (`SD.next_free_name`: SBP1 → SBP2 ...), and an existing name is refused ("use SBP Edit to change
+    it").
+  - Walls from before 25 Sep: delete them by hand and make them again.
+  - Data copy on an SBP Edit rebuild is now capped at 5 c/c (`match_nearest(max_dist)`).
+- **SBP Edit "Edit" button next to Finish:**
+  - The Multiple/Finish/Cancel options bar belongs to Revit, and the API cannot add a button to it.
+  - Closest behaviour: select the piles → **Finish** opens the Edit form → its button is now
+    **"Apply"**.
+  - The prompt now says "Click the piles to edit (Tab = whole chain), then click Finish to open the
+    Edit form".
+  - Selecting piles first, then SBP Edit, skips Finish.
+  - Asked him whether he wants a loop (edit again until Esc).
+- **SOFT piles must be cut by HARD piles** (HARD has reinforcement): his 3D image showed full
+  overlapping cylinders.
+  - Fix: `hard_soft_pairs()` + `cut_soft_by_hard()` use `JoinGeometryUtils.JoinGeometry(hard, soft)`,
+    and `SwitchJoinOrder` if needed so the HARD pile cuts.
+  - This covers neighbours along the wall plus joined ends of other walls. It runs in the look
+    transaction (SBP Wall) and after a rebuild (SBP Edit).
+  - The report row "SOFT piles cut" gives the count and any failures.
+  - Not tested yet: whether Revit allows joining these foundation piles.
+
+**Pick Lines, for Akash:**
+- Revit's Pick Lines ends with **Esc twice** or **Modify**; Enter does nothing there.
+- **Tab** on a hovered line/edge highlights the whole chain, then one click picks it.
+- CAD lines can be picked if the selection toggles allow it (bottom right of Revit: Select links /
+  pinned / underlay).
+- Existing model or detail lines: select them first (Tab works), then SBP Wall.
+- Reference planes are not supported by Revit's Pick Lines (it can be added to SBP Wall if needed).
+- `lib/sbp_draw.py` now writes `%APPDATA%\SBPTool\draw_log.txt` (start, each idle and the decision).
+  If the form still doesn't open after picking + Esc Esc, send that file.
+
+Tests: 22 pass (2 new: next free name, data-copy cap). Parse, IronPython and ASCII checks are clean.
+**Reload pyRevit before testing.** Not committed.
+
+## 16. 26 Sep: reference planes, own invisible line style, SBP Edit loop (built, not yet tested)
+**Akash asked:**
+1. "Add" reference planes as a source for the wall line.
+2. For the invisible line: "if the line type is not there add one, if it is there use that one".
+3. SBP Edit loop: yes.
+
+**Built:**
+- **Reference planes:** select them first, then SBP Wall.
+  - `sbp_geom.chain_from_lines()` orders them by where they cross, trims at the crossings and keeps
+    the far ends. Planes that stop up to 5 m short (`PLANE_REACH_MM`) still meet. Every plane
+    crossing two others makes a closed loop.
+  - `SR.plane_chain()` builds the line in memory. `SR.make_model_lines()` creates the model lines
+    only inside the wall transaction, so a cancel leaves nothing behind.
+  - Those lines are then the wall's lines (hidden, saved, editable with SBP Line/Edit). Moving the
+    reference planes later does not move the wall.
+  - Tested offline: single plane, L crossing, rectangle in random order, stopping short, parallel /
+    too many crossings (errors).
+- **Invisible line:** `<Invisible lines>` is built into every Revit model (it cannot be added). When
+  Revit refuses it:
+  - the line gets our line style **"SBP Invisible"** (a Lines sub-category: reused if there, added if
+    missing);
+  - that style is turned off in the current view (`SetCategoryHidden`). If the view template
+    controls model visibility, it asks before doing it in the template;
+  - last fallback: hide the lines in the view.
+  - `is_invisible()` also treats "SBP Invisible" as hidden, so SBP Line works.
+- **SBP Edit loop:** select → Finish (= open the form) → Apply → it asks for the next piles; Esc or
+  Cancel ends. A cancelled form or "No" on the rebuild question goes back to picking. The report
+  heading is "SBP Edit (1)", "SBP Edit (2)" ...
+- Tooltips updated for SBP Wall and SBP Edit.
+- Tests: 27 pass (15 geometry, 12 data). Static checks clean. Reload pyRevit before testing.
+
+**Revit test for Akash:**
+1. Select 2 crossing reference planes → SBP Wall → wall along the L.
+2. Select 4 planes around a rectangle → closed wall.
+3. Check the report's Drawn line row: `<Invisible lines>`, or "uses the line style 'SBP Invisible'".
+4. SBP Edit: edit one wall, Apply → it asks again → edit another → Esc.
+5. The SOFT piles cut row in the report, and 3D.

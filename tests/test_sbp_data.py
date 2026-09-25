@@ -82,6 +82,21 @@ def test_spacing_change_moves_data_like_the_preview():
     assert j == 14 and abs(d - 764) < 2, (j, d)
 
 
+def test_next_free_name_never_reuses():
+    assert SD.next_free_name("SBP1", set()) == "SBP1"
+    assert SD.next_free_name("SBP1", {"SBP1"}) == "SBP2"
+    assert SD.next_free_name("SBP1", {"SBP1", "SBP2", "SBP3"}) == "SBP4"
+    assert SD.next_free_name("WALL-A", {"WALL-A"}) == "WALL-A2"
+    assert SD.next_free_name("", {"SBP1"}) == "SBP2"
+
+
+def test_match_nearest_distance_cap():
+    old = [(0.0, 0.0, "HARD"), (100.0, 0.0, "SOFT")]
+    new = [(30000.0, 0.0, "HARD"), (150.0, 0.0, "SOFT")]
+    m, lost = SD.match_nearest(old, new, max_dist=4500.0)
+    assert list(m.keys()) == [1] and lost == [0]      # 30 m away: not copied, reported
+
+
 def test_join_rules():
     D, S = 1200.0, 900.0
     assert SD.classify_join(None, D, S) is None

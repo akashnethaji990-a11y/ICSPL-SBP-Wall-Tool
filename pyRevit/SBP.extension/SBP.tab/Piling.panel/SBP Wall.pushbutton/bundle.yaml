@@ -2,5 +2,6 @@ title: "SBP\nWall"
 tooltip: >-
   Click with nothing selected: Revit's Draw tools open (Line, Rectangle, Circle, Arc, Spline,
   Pick Lines). Draw your line and press Modify / Esc; the SBP Wall form then opens by itself.
-  Or select existing line(s) first, then click. Piles ICSPL_Pile HARD/SOFT are placed at gap + D/2.
+  Or select existing line(s) or reference planes first, then click.
+  Never deletes: a new wall always gets a new name. SOFT piles are cut by HARD piles.
 author: Akash

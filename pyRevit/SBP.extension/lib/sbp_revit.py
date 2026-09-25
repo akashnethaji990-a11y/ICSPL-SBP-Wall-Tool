@@ -12,7 +12,8 @@ from System.Collections.Generic import List
 from Autodesk.Revit.DB import (
     FilteredElementCollector, FamilySymbol, FamilyInstance, Level, CurveElement, XYZ,
     UnitUtils, UnitTypeId, SpecTypeId, UnitFormatUtils, BuiltInParameter, BuiltInCategory,
-    ElementId, StorageType, InternalDefinition, GraphicsStyleType, Material, Color,
+    ElementId, StorageType, InternalDefinition, GraphicsStyleType, Material, Color, Category,
+    JoinGeometryUtils, Line, Plane, SketchPlane,
     FillPattern, FillPatternElement, FillPatternTarget, FillPatternHostOrientation,
     OverrideGraphicSettings, ParameterFilterElement, ParameterFilterRuleFactory, ElementParameterFilter,
 )
@@ -34,10 +35,18 @@ HARD, SOFT = "HARD", "SOFT"
 HATCH_NAME = "Diagonal up 1.5mm"        # SOFT piles in 2D (created if missing)
 MATERIAL_NAME = "ICSPL_Pile"            # both pile types in 3D
 FILTER_NAMES = {HARD: "SBP HARD PILE", SOFT: "SBP SOFT PILE"}
+SBP_LINE_STYLE = "SBP Invisible"        # used (and hidden in the view) if Revit refuses <Invisible lines>
+PLANE_REACH_MM = 5000.0                 # reference planes that stop this short of each other still meet
 # Typed pile data that must NOT follow a pile to its new place after a rebuild.
 DATA_SKIP = ("Depth", "X-Easting", "Y-Northing", "Mark", "Comments", P_OFFSET)
 # Fixed id of the hidden "wall settings" data. Never change it, or saved walls are lost.
 SCHEMA_GUID = Guid("5b3f7c2e-8d41-4a6f-9e2b-7c1a0d4e6f38")
+
+
+# ------------------------------------------------------------------ report text
+def html(text):
+    """pyRevit's report reads <...> as HTML and hides it (e.g. '<Invisible lines>'): escape it."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # ------------------------------------------------------------------ units
@@ -115,6 +124,13 @@ def is_sbp_pile(e):
 def wall_piles(doc, wall):
     """[(pile, kind)] of one wall (exact name match, so 'SBP1' never picks 'SBP1-A')."""
     return [(fi, kind_of(fi)) for fi in all_piles(doc) if wall_of(fi) == wall]
+
+
+def wall_names(doc):
+    """Every wall name already used in the model (pile marks + saved walls)."""
+    names = set(n for n in (wall_of(fi) for fi in all_piles(doc)) if n)
+    names.update(load_walls(doc).keys())
+    return names
 
 
 def xy(fi):
@@ -244,6 +260,45 @@ def orient_chain(items, anchor_uid, anchor_reversed):
     return items
 
 
+def view_z(view):
+    """Height of the view's work plane (where new model lines go)."""
+    sp = view.SketchPlane
+    if sp is not None:
+        return sp.GetPlane().Origin.Z
+    lv = view.GenLevel
+    return lv.ProjectElevation if lv is not None else 0.0
+
+
+def plane_chain(planes, view):
+    """Wall line from selected reference planes, trimmed where they cross (no model change yet).
+
+    Returns (items, closed) like build_chain, but with element None: make_model_lines() creates
+    the model lines when the wall is really made. Raises ValueError with a message for the user.
+    """
+    z = view_z(view)
+    segs = [((rp.BubbleEnd.X, rp.BubbleEnd.Y), (rp.FreeEnd.X, rp.FreeEnd.Y)) for rp in planes]
+    pts, closed = G.chain_from_lines(segs, mm(PLANE_REACH_MM))
+    if closed:
+        pts = pts + [pts[0]]
+    items = []
+    for a, b in zip(pts[:-1], pts[1:]):
+        if math.hypot(b[0] - a[0], b[1] - a[1]) > mm(1):
+            items.append((Line.CreateBound(XYZ(a[0], a[1], z), XYZ(b[0], b[1], z)), None, False))
+    if not items:
+        raise ValueError("The reference planes give no line to follow.")
+    return items, closed
+
+
+def make_model_lines(doc, items):
+    """Create model lines for chain items that have none yet (from reference planes).
+    Call inside a transaction. Returns the items with their new line elements."""
+    if all(e is not None for c, e, r in items):
+        return items
+    z = items[0][0].GetEndPoint(0).Z
+    sp = SketchPlane.Create(doc, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ(0, 0, z)))
+    return [(c, e if e is not None else doc.Create.NewModelCurve(c, sp), r) for c, e, r in items]
+
+
 def sample_curve(c, step):
     n = max(2, int(math.ceil(c.Length / step)) + 1)
     pts, tans = [], []
@@ -273,31 +328,65 @@ def centre_path(items, closed, side, dist):
 
 
 # line styles -----------------------------------------------------------------
-def _inv_cat_id():
-    return ElementId(BuiltInCategory.OST_InvisibleLines)
+def _is_invisible_cat(cat):
+    if cat is None:
+        return False
+    if cat.Id == ElementId(BuiltInCategory.OST_InvisibleLines):
+        return True
+    return (cat.Name or "").strip("<> ").lower() in ("invisible lines", "invisible line")
 
 
-def invisible_style(doc, curve_el):
-    """<Invisible lines> style, taken from the styles Revit allows on this line.
-
-    Returns (style or None, names of the allowed styles) so a failure can be reported.
-    """
-    names = []
-    for sid in curve_el.GetLineStyleIds():
-        gs = doc.GetElement(sid)
-        cat = gs.GraphicsStyleCategory if gs else None
-        if cat is None:
-            continue
-        names.append(cat.Name)
-        if cat.Id == _inv_cat_id() or cat.Name == "<Invisible lines>":
-            return gs, names
-    return None, names
+def invisible_style(doc, curve_el=None):
+    """The <Invisible lines> line style of this model, or None."""
+    try:
+        cat = Category.GetCategory(doc, BuiltInCategory.OST_InvisibleLines)
+        gs = cat.GetGraphicsStyle(GraphicsStyleType.Projection) if cat is not None else None
+        if gs is not None:
+            return gs
+    except Exception:
+        pass
+    for sub in doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines).SubCategories:
+        if _is_invisible_cat(sub):
+            return sub.GetGraphicsStyle(GraphicsStyleType.Projection)
+    if curve_el is not None:
+        for sid in curve_el.GetLineStyleIds():
+            gs = doc.GetElement(sid)
+            if gs is not None and _is_invisible_cat(gs.GraphicsStyleCategory):
+                return gs
+    return None
 
 
 def is_invisible(curve_el):
+    """True for <Invisible lines> and for our own hidden style 'SBP Invisible'."""
     gs = curve_el.LineStyle
     cat = gs.GraphicsStyleCategory if gs is not None else None
-    return cat is not None and (cat.Id == _inv_cat_id() or cat.Name == "<Invisible lines>")
+    return _is_invisible_cat(cat) or (cat is not None and cat.Name == SBP_LINE_STYLE)
+
+
+def sbp_line_style(doc):
+    """Line style 'SBP Invisible' (a Lines sub-category): use it if it is there, else add it.
+    Call inside a transaction."""
+    lines = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines)
+    for sub in lines.SubCategories:
+        if sub.Name == SBP_LINE_STYLE:
+            return sub
+    return doc.Settings.Categories.NewSubcategory(lines, SBP_LINE_STYLE)
+
+
+def _hide_category(doc, view, cat_id, allow_template):
+    """Turn a (sub-)category off in the view, or in its template when the template controls it."""
+    target, where = view, "view '{}'".format(view.Name)
+    if view.ViewTemplateId != ElementId.InvalidElementId:
+        tpl = doc.GetElement(view.ViewTemplateId)
+        free = [i for i in tpl.GetNonControlledTemplateParameterIds()]
+        if not any(i == ElementId(BuiltInParameter.VIS_GRAPHICS_MODEL) for i in free):
+            if allow_template is None or not allow_template(tpl.Name):
+                return False, "view template '{}' controls the line visibility".format(tpl.Name)
+            target, where = tpl, "view template '{}'".format(tpl.Name)
+    if not target.CanCategoryBeHidden(cat_id):
+        return False, "{} cannot hide that line style".format(where)
+    target.SetCategoryHidden(cat_id, True)
+    return True, where
 
 
 def visible_styles(elements, keep=None):
@@ -309,26 +398,71 @@ def visible_styles(elements, keep=None):
     return res
 
 
-def hide_lines(doc, elements):
-    """Make the lines <Invisible lines>. Returns a list of problems (empty = all hidden)."""
-    errs = []
+def hide_lines(doc, elements, view=None, allow_template=None):
+    """Make the drawn lines invisible, in this order:
+    1. line style <Invisible lines> (built into every Revit model);
+    2. if Revit refuses it: our line style 'SBP Invisible' (added if missing, reused if there),
+       turned off in `view` (or in its template, if allow_template(name) says yes);
+    3. if that fails too: hide the lines in `view`.
+    Returns notes for the report (empty = all set to <Invisible lines>).
+    """
+    errs, refused, gs = [], [], None
     for e in elements:
         if is_invisible(e):
             continue
-        gs, names = invisible_style(doc, e)
-        if gs is None:
-            errs.append("Line {}: '<Invisible lines>' not offered. Allowed styles: {}".format(e.Id, ", ".join(names)))
-            continue
+        gs = gs or invisible_style(doc, e)
         try:
+            if gs is None:
+                raise Exception("this model has no <Invisible lines> style")
             e.LineStyle = gs
         except Exception as ex:
-            errs.append("Line {}: {}".format(e.Id, ex))
+            refused.append((e, str(ex)))
+    if not refused:
+        return errs
+    left = []
+    try:
+        sub = sbp_line_style(doc)
+        own = sub.GetGraphicsStyle(GraphicsStyleType.Projection)
+        for e, why in refused:
+            try:
+                e.LineStyle = own
+            except Exception:
+                left.append(e)
+        done = len(refused) - len(left)
+        if done:
+            note = "Revit refused <Invisible lines> ({}), so {} line(s) use the line style '{}'".format(
+                refused[0][1], done, SBP_LINE_STYLE)
+            if view is not None:
+                ok, where = _hide_category(doc, view, sub.Id, allow_template)
+                note += ", turned off in {}".format(where) if ok else ", NOT turned off: {}".format(where)
+            errs.append(note)
+    except Exception as ex:
+        left = [e for e, why in refused]
+        errs.append("could not use the line style '{}': {}".format(SBP_LINE_STYLE, ex))
+    if left and view is not None:
+        try:
+            view.HideElements(List[ElementId]([e.Id for e in left]))
+            errs.append("so these lines were hidden in view '{}' instead".format(view.Name))
+        except Exception as ex:
+            errs.append("could not hide them in the view either: {}".format(ex))
     return errs
 
 
-def show_lines(doc, elements, saved_styles):
+def is_hidden_in(view, elements):
+    try:
+        return any(e.IsHidden(view) for e in elements)
+    except Exception:
+        return False
+
+
+def show_lines(doc, elements, saved_styles, view=None):
     """Give hidden lines their saved style back (fallback: the plain 'Lines' style)."""
     errs = []
+    if view is not None and is_hidden_in(view, elements):
+        try:
+            view.UnhideElements(List[ElementId]([e.Id for e in elements]))
+        except Exception as ex:
+            errs.append("could not unhide the lines in this view: {}".format(ex))
     plain = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines).GetGraphicsStyle(GraphicsStyleType.Projection)
     for e in elements:
         gs = None
@@ -460,6 +594,45 @@ def apply_levels(doc, piles, cutoff_mm, toe_h_mm, toe_s_mm):
     return check
 
 
+# ------------------------------------------------------------------ SOFT piles cut by HARD piles
+def hard_soft_pairs(placed, closed, ends=None):
+    """(HARD, SOFT) pairs of piles that overlap: neighbours along the wall, plus the piles of
+    other walls at a joined end. placed = [(pile, kind)] in wall order."""
+    pairs = []
+    n = len(placed)
+    steps = list(range(n - 1)) + ([n - 1] if closed and n > 2 else [])
+    for i in steps:
+        (a, ka), (b, kb) = placed[i], placed[(i + 1) % n]
+        if ka != kb:
+            pairs.append((a, b) if ka == HARD else (b, a))
+    for key, idx in (("start", 0), ("end", n - 1)):
+        j = (ends or {}).get(key)
+        if n and j and j.get("join") and j.get("pile") is not None and j.get("kind") in (HARD, SOFT):
+            mine, kind = placed[idx]
+            if kind != j["kind"]:
+                pairs.append((mine, j["pile"]) if kind == HARD else (j["pile"], mine))
+    return pairs
+
+
+def cut_soft_by_hard(doc, pairs):
+    """Join each (HARD, SOFT) pair so the HARD pile cuts the SOFT one: the HARD pile keeps its
+    full round shape (it has reinforcement), the SOFT pile loses the overlap.
+    Returns (joined, failed, first error). Call inside a transaction."""
+    ok = bad = 0
+    first = None
+    for hard, soft in pairs:
+        try:
+            if not JoinGeometryUtils.AreElementsJoined(doc, hard, soft):
+                JoinGeometryUtils.JoinGeometry(doc, hard, soft)
+            if not JoinGeometryUtils.IsCuttingElementInJoin(doc, hard, soft):
+                JoinGeometryUtils.SwitchJoinOrder(doc, hard, soft)
+            ok += 1
+        except Exception as ex:
+            bad += 1
+            first = first or str(ex)
+    return ok, bad, first
+
+
 # ------------------------------------------------------------------ typed pile data
 def _copyable(p):
     if p.IsReadOnly or not p.HasValue:
@@ -497,8 +670,8 @@ def snapshot_data(piles):
     return res
 
 
-def restore_data(snap, placed):
-    """Copy typed data to the nearest new pile of the same type.
+def restore_data(snap, placed, max_dist=None):
+    """Copy typed data to the nearest new pile of the same type (never further than max_dist).
 
     Returns (copied, lost): copied = [(old mark, new mark, distance mm)], lost = [old mark].
     """
@@ -506,7 +679,7 @@ def restore_data(snap, placed):
     if not olds or not placed:
         return [], [s[3] for s in olds]
     new = [xy(fi) + (kind,) for fi, kind in placed]
-    matches, lost = SD.match_nearest([(s[0], s[1], s[2]) for s in olds], new)
+    matches, lost = SD.match_nearest([(s[0], s[1], s[2]) for s in olds], new, max_dist)
     copied = []
     for i, (j, d) in matches.items():
         fi = placed[j][0]

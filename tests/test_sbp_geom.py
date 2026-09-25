@@ -138,6 +138,47 @@ def test_closed_ignores_end_settings():
     assert len(c) == 76 and len(c) % 2 == 0 and k[0] == "HARD"
 
 
+# ---------------------------------------------------------------- reference planes -> chain
+def test_planes_single():
+    pts, closed = G.chain_from_lines([((0, 0), (10000, 0))], 5000)
+    assert pts == [(0, 0), (10000, 0)] and not closed
+
+
+def test_planes_L_crossing_is_trimmed():
+    # two planes drawn past each other: corner at their crossing (0, 0), far ends kept
+    segs = [((-1000, 0), (12000, 0)), ((0, 9000), (0, -1500))]
+    pts, closed = G.chain_from_lines(segs, 5000)
+    assert not closed and len(pts) == 3
+    assert pts[1] == (0.0, 0.0)
+    assert set([pts[0], pts[2]]) == set([(12000, 0), (0, 9000)])
+
+
+def test_planes_rectangle_any_order_is_closed():
+    segs = [((0, -500), (0, 12500)), ((-500, 12000), (20500, 12000)),
+            ((-500, 0), (20500, 0)), ((20000, 12500), (20000, -500))]      # picked in a random order
+    pts, closed = G.chain_from_lines(segs, 5000)
+    assert closed and len(pts) == 4
+    assert set(pts) == set([(0.0, 0.0), (0.0, 12000.0), (20000.0, 12000.0), (20000.0, 0.0)])
+
+
+def test_planes_stopping_short_still_meet_within_reach():
+    segs = [((0, 0), (9000, 0)), ((10000, 1000), (10000, 8000))]            # 1 m gap at the corner
+    pts, closed = G.chain_from_lines(segs, 5000)
+    assert pts[1] == (10000.0, 0.0)
+
+
+def test_planes_errors():
+    for segs, words in (
+        ([((0, 0), (10, 0)), ((0, 5), (10, 5))], "does not meet"),                       # parallel
+        ([((0, 0), (100, 0)), ((50, -10), (50, 10)), ((20, -10), (20, 10)), ((80, -10), (80, 10))], "more than two"),
+    ):
+        try:
+            G.chain_from_lines(segs, 1)
+            assert False, "should fail"
+        except ValueError as ex:
+            assert words in str(ex), str(ex)
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     bad = 0
