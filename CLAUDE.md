@@ -88,6 +88,9 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
   - `SBP Wall.pushbutton`: create a wall. rpw FlexForm with fallback prompts; last-used values in
     `%APPDATA%\SBPTool\settings.json`; per-wall settings saved in the model.
   - `SBP Edit.pushbutton`, `SBP Select.pushbutton`, `SBP Line.pushbutton`: new 25 Sep (see HISTORY §11).
+  - `lib/sbp_draw.py`: draw-then-build for SBP Wall (26 Sep, HISTORY §14). PostCommand(ModelLine) →
+    Idling handler (only while waiting) → env var `SBP_DRAWN` → re-posts the SBP Wall button
+    (`CustomCtrl_%CustomCtrl_%SBP%Piling%SBP Wall`). SBP Wall uses `__persistentengine__ = True`.
   - `SBP Count.pushbutton`: counts HARD/SOFT per wall.
 - `tests/test_sbp_geom.py`, `tests/test_sbp_data.py`: offline tests. Run with `python tests/<file>`.
 - Button icons: `icon.png` (light Revit theme) + `icon.dark.png` (dark theme) in each `.pushbutton`,
@@ -152,7 +155,7 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
 - **Exact next step (morning of 26 Sep):**
   1. §11 step 1 passed (26 Sep); icons added (HISTORY §13). Akash reloads, then runs §11 steps 2–8 in
      `TESTING MODEL\SBP TEST MODEL.rvt` and sends screenshots of each report. Fix what fails.
-  2. **New request (HISTORY §12):** SBP Wall should open a Modify | Place tab with the Draw tools
+  2. **Built 26 Sep, test in Revit (HISTORY §14):** was the new request (HISTORY §12): SBP Wall should open a Modify | Place tab with the Draw tools
      (Line, Arc, Circle, Spline, Pick Lines), like Revit's Wall tool, instead of drawing a Model
      Line first. Research `PostCommand(ModelLine)` + a hand-off (two clicks / DocumentChanged-Idling
      hook / 'SBP Line' style), then show him the options before coding.

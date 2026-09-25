@@ -1,5 +1,6 @@
 title: "SBP\nWall"
 tooltip: >-
-  Select a line (straight, arc, circle, spline or connected chain), set the values,
-  click the wall side. Places ICSPL_Pile HARD/SOFT piles offset by gap + D/2.
+  Click with nothing selected: Revit's Draw tools open (Line, Rectangle, Circle, Arc, Spline,
+  Pick Lines). Draw your line and press Modify / Esc; the SBP Wall form then opens by itself.
+  Or select existing line(s) first, then click. Piles ICSPL_Pile HARD/SOFT are placed at gap + D/2.
 author: Akash

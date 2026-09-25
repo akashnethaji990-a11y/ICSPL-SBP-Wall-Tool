@@ -421,3 +421,34 @@ The `lib/__pycache__/*.pyc` files (from the offline tests) were committed by mis
 - `.gitignore` now ignores `__pycache__/` and `*.pyc`, and the two committed .pyc files were untracked
   (`git rm --cached`). Not committed yet.
 - Next: Akash reloads to see the icons, then runs §11 steps 2–8.
+
+## 14. 26 Sep: SBP Wall opens Revit's Draw tools (the §12 request), built but not yet tested
+- The icons showed after Reload. Akash then asked why SBP Wall still said "Multiple / Finish / Cancel"
+  (select lines) instead of the Wall-tool experience (§12 was only recorded, not built).
+- He asked whether SBP Wall could switch to the existing Modify tab. Answer:
+  - Yes: starting Revit's own draw command makes Revit show its existing Modify tab with the Draw
+    panel. That is how the Wall tool works too.
+  - The plain Modify tab has no Draw panel, and a custom contextual tab is not possible in the API.
+  - The title will read "Modify | Place Lines".
+  - He confirmed: "Yes, that is it".
+- Checked before building:
+  - Revit 2026 API docs: Idling is raised only "when Revit is not in an active tool".
+  - pyRevit 5.2 supports an `app-idling` hook, but a temporary handler is used instead (no permanent
+    cost).
+  - The pyRevit button id is `CustomCtrl_%CustomCtrl_%SBP%Piling%SBP Wall`.
+- Built:
+  - `lib/sbp_draw.py` (start_draw / _on_idle / take_drawn / stop).
+  - SBP Wall's `get_curve_elements()`: pre-selected lines → lines just drawn → otherwise start drawing.
+  - `__persistentengine__ = True`, and a new tooltip.
+  - Tests still 20/20; static checks clean.
+- **After updating files, click pyRevit → Reload.** The persistent engine keeps the old modules until a
+  reload.
+- **Revit test for Akash:**
+  1. Plan view, nothing selected → SBP Wall → the Modify | Place Lines tab with the Draw panel appears.
+  2. Draw a line + arc chain → Modify → the SBP Wall form opens by itself → OK → click side → wall.
+  3. Try Rectangle (closed wall), Spline, and Pick Lines on a slab edge.
+  4. SBP Wall → Esc without drawing → nothing happens. Draw a normal Model Line later → SBP Wall must NOT
+     pop up.
+  5. Select an existing line → SBP Wall → works as before.
+  6. If the form does not open by itself after drawing, click SBP Wall once more: it picks up the lines
+     just drawn. Tell Claude, since it means the automatic hand-off is not working.

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Place a Secant Bored Pile (SBP) wall along any drawn line.
 
-1. Select the 'other structure' line(s): line, arc, circle, spline or a connected chain.
+1. Click SBP Wall with nothing selected: Revit's Modify | Place Lines tab opens with the Draw panel
+   (Line, Rectangle, Circle, Arcs, Spline, Pick Lines ...). Draw the 'other structure' line and
+   press Modify / Esc: this form then opens by itself.
+   Or select existing line(s) first (line, arc, circle, spline or a connected chain), then click.
 2. Fill in the settings (all adjustable, remembered for next time).
 3. Click on the side where the SBP wall should go.
 Piles are placed as HARD / SOFT alternately, offset by (gap + D/2) from your line.
@@ -10,12 +13,13 @@ HARD/SOFT pattern. The wall's settings are saved with it, so SBP Edit can change
 """
 __title__ = "SBP\nWall"
 __author__ = "Akash"
+__persistentengine__ = True     # keeps the "drawing finished" handler (sbp_draw) alive after the script ends
 
 import os
 import json
 
 from Autodesk.Revit.DB import Transaction, ViewPlan, ElementId, CurveElement
-from Autodesk.Revit.UI.Selection import ObjectType
+
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from System.Collections.Generic import List
 
@@ -24,6 +28,7 @@ from pyrevit import revit, forms, script
 import sbp_geom as G
 import sbp_data as SD
 import sbp_revit as SR
+import sbp_draw
 
 doc = revit.doc
 uidoc = revit.uidoc
@@ -62,16 +67,19 @@ def fail(msg):
 
 
 def get_curve_elements():
+    """1. lines selected before clicking, 2. lines just drawn with the Draw tools, 3. start drawing."""
     pre = [doc.GetElement(i) for i in uidoc.Selection.GetElementIds()]
     pre = [e for e in pre if isinstance(e, CurveElement)]
     if pre:
+        sbp_draw.stop(__revit__)
         return pre
-    try:
-        refs = uidoc.Selection.PickObjects(ObjectType.Element, SR.CurveFilter(),
-                                           "Select the 'other structure' line(s), then click Finish")
-    except OperationCanceledException:
-        script.exit()
-    return [doc.GetElement(r) for r in refs]
+    drawn = sbp_draw.take_drawn(doc)
+    if drawn:
+        return drawn
+    # Nothing selected: open Revit's Modify | Place Lines tab (Draw panel). When the drafter finishes
+    # (Modify / Esc), sbp_draw runs SBP Wall again with the new lines.
+    sbp_draw.start_draw(__revit__, doc)
+    script.exit()
 
 
 def num(v, label, allow_blank=False):

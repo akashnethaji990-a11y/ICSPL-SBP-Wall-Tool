@@ -11,13 +11,14 @@
 ## Buttons
 | Button | What you do | What happens |
 |---|---|---|
-| **SBP Wall** | Select your line → fill the form → click the wall side | Piles placed, line hidden, the wall's settings saved with it |
+| **SBP Wall** | Nothing selected: Revit's Draw tools open (Line, Rectangle, Circle, Arc, Spline, Pick Lines) → draw → Modify/Esc → the form opens by itself → click the wall side. Or select existing line(s) first | Piles placed, line hidden, the wall's settings saved with it |
 | **SBP Edit** | Click any pile(s) of one or more walls → change values → OK | Only Cut-off / Toe changed: same piles kept (marks and typed data stay). Spacing, gap, type, level or a moved line: the wall is rebuilt after you confirm |
 | **SBP Select** | Click any pile → Whole wall / HARD only / SOFT only | All those piles are selected (tag, schedule, check) |
 | **SBP Line** | Click any pile | The hidden line is shown and selected so you can move or reshape it. Click again to hide it |
 | **SBP Count** | Click | HARD / SOFT / TOTAL for every wall |
 
 ## Everyday workflow
+- **New wall:** click SBP Wall → draw with the Draw tools (the tab says "Modify | Place Lines") → Modify/Esc → fill the form → click the wall side. Draw one connected chain per wall.
 - **Levels change** (e.g. cut-off −150 → −300): click any pile → SBP Edit → change → OK.
 - **Spacing change:** SBP Edit → change c/c → confirm the rebuild.
 - **Shape change:** SBP Line → move/reshape the line → SBP Edit → OK (the wall follows, line hides).
