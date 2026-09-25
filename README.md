@@ -9,6 +9,6 @@ A pyRevit extension for drafting SBP (secant / bored pile) walls in Revit, built
 - Keeps HARD / SOFT continuous across construction joints
 - Edit an existing wall's piles with SBP Edit
 
-## Install (for drafters)
+## How to Install
 
 Open **Windows PowerShell** and paste this one line, then press Enter:
