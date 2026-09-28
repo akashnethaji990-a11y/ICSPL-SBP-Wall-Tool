@@ -36,7 +36,7 @@ Paste this into Claude Code in VS Code:
 ```
 Set up a Git repo for the SBP extension. Do NOT change any code.
 1. Create D:\Dev\SBP-pyRevit with this layout (copy from COMPANY SET UP):
-   SBP.extension\ (lib, SBP.tab)   docs\ (HISTORY.md, ADR, ref\, PNGs, PDF)
+   SBP.extension\ (lib, ERSS.tab)   docs\ (HISTORY.md, ADR, ref\, PNGs, PDF)
    preview\   tests\ (if any)   CLAUDE.md   README.md   CHANGELOG.md   INSTALL.md   .gitignore
    Use the .gitignore, CHANGELOG.md and INSTALL.md from COMPANY SET UP\github.
 2. Update the paths inside CLAUDE.md and HISTORY.md to the new layout.
@@ -55,7 +55,7 @@ Keep COMPANY SET UP as it is (don't delete) until I confirm.
 pyRevit → **Settings** → **Custom Extension Directories**:
 - **Remove** `D:\01_SP-\OneDrive - IC Singapore\COMPANY SET UP\pyRevit`
 - **Add** `D:\Dev\SBP-pyRevit`
-- **Save Settings and Reload**, then check that the SBP tab appears **once**.
+- **Save Settings and Reload**, then check that the ERSS tab appears **once**.
 
 ### 2.4 Give colleagues access
 GitHub → your repo → **Settings** → **Collaborators** → **Add people** → type their GitHub username or email.
@@ -115,7 +115,7 @@ Then tell your colleagues: **"New SBP version v2.0. Open GitHub Desktop → Pull
 | A release is broken for colleagues | Ask Claude Code: `Revert main to tag v1.0 and push`. Colleagues pull again and are back on the old version. |
 | You edited on main by mistake | `Move my uncommitted changes from main to dev` |
 | "Push rejected" | `Pull first, then push again` (someone, or you on another PC, pushed first) |
-| Two SBP tabs in Revit | An old folder is still in the pyRevit extension list. Remove it in Settings. |
+| Two ERSS tabs in Revit | An old folder is still in the pyRevit extension list. Remove it in Settings. |
 | You want an old version of a file | `Show me script.py as it was in v1.0` |
 
 ---
@@ -125,6 +125,6 @@ Then tell your colleagues: **"New SBP version v2.0. Open GitHub Desktop → Pull
 - [ ] GitHub account + GitHub Desktop (+ optional gh CLI)
 - [ ] Repo folder created at `D:\Dev\SBP-pyRevit`, first commit, tag v1.0
 - [ ] Private repo on GitHub, main + dev pushed
-- [ ] pyRevit points to the new folder, one SBP tab
+- [ ] pyRevit points to the new folder, one ERSS tab
 - [ ] Colleagues invited (or Organization with Read role)
 - [ ] INSTALL.md sent to colleagues

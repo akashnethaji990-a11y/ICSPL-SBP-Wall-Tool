@@ -110,6 +110,64 @@ def test_join_rules():
     assert SD.end_setup("touch", "HARD") == ("SOFT", False)
 
 
+def test_mark_numbers():
+    assert SD.mark_number("SP12", "SP") == 12 and SD.mark_number(" SP007 ", "SP") == 7
+    assert SD.mark_number("C1-SP5", "SP") is None and SD.mark_number("C1-SP5", "C1-SP") == 5
+    assert SD.mark_number("SPX3", "SP") is None and SD.mark_number("SP", "SP") is None
+    assert SD.mark_number("SBP1-S001", "SP") is None and SD.mark_number("SP3", "") is None
+    assert SD.max_number(["SP3", "HP9", "SP12", "SP2", "C1-SP40", ""], "SP") == 12
+    assert SD.max_number(["HP1"], "SP") == 0
+
+
+def test_check_prefixes():
+    assert SD.check_prefixes("SP", "HP") == [] and SD.check_prefixes("C1-SP", "C1-HP") == []
+    assert SD.check_prefixes("", "HP") and SD.check_prefixes("SP", "SP")
+    assert len(SD.check_prefixes("SP1", "HP")) == 1
+
+
+def test_number_plan_open_wall_starts_hard():
+    kinds = ["HARD", "SOFT"] * 21 + ["HARD"]                       # 43 piles, 22 H / 21 S
+    (name, lv, marks, rng), = SD.number_plan([("SBP1", "L1", kinds)], "SP", "HP", {})
+    assert marks[:4] == ["HP1", "SP1", "HP2", "SP2"] and marks[-1] == "HP22"
+    assert rng == {"SOFT": (1, 21), "HARD": (1, 22)}
+    assert SD.range_text("SP", rng["SOFT"]) == "SP1 to SP21" and SD.range_text("HP", (4, 4)) == "HP4"
+
+
+def test_number_plan_continues_across_walls_per_level():
+    walls = [("SBP1", "L1", ["SOFT", "HARD", "SOFT"]), ("SBP2", "L2", ["HARD"]), ("SBP3", "L1", ["HARD", "SOFT"])]
+    res = SD.number_plan(walls, "C1-SP", "C1-HP", {"L1": (7, 7)})
+    assert res[0][2] == ["C1-SP8", "C1-HP8", "C1-SP9"]
+    assert res[1][2] == ["C1-HP1"]                                  # other level: own sequence
+    assert res[2][2] == ["C1-HP9", "C1-SP10"]                       # runs on from SBP1, not from 1
+
+
+def test_continue_text():
+    assert SD.continue_text("SP", 7) == "continuing from SP7, next will be SP8"
+    assert SD.continue_text("HP", 0) == "no HP numbers yet, next will be HP1"
+
+
+def test_default_marks():
+    assert SD.default_mark_parts("SBP1-H014") == ("SBP1", "HARD", 14)
+    assert SD.default_mark_parts("WALL-A-s003") == ("WALL-A", "SOFT", 3)
+    assert SD.default_mark_parts("SP12") is None
+    assert SD.is_default_mark("SBP1-S001", "SBP1") and not SD.is_default_mark("SBP1-S001", "SBP2")
+    assert not SD.is_default_mark("HP3", "SBP1") and not SD.is_default_mark("", "SBP1")
+    assert sorted(["SBP10", "SBP2", "SBP1"], key=SD.natural_key) == ["SBP1", "SBP2", "SBP10"]
+
+
+def test_legacy_order():
+    # open wall H S H S H along x at 900 c/c, keys shuffled
+    piles = [("h1", "HARD", 1, 0, 0), ("s1", "SOFT", 1, 900, 0), ("h2", "HARD", 2, 1800, 0),
+             ("s2", "SOFT", 2, 2700, 0), ("h3", "HARD", 3, 3600, 0)]
+    assert SD.legacy_order(list(reversed(piles))) == ["h1", "s1", "h2", "s2", "h3"]
+    # joined wall that starts SOFT and ends HARD (equal counts): the positions decide
+    piles = [("s1", "SOFT", 1, 0, 0), ("h1", "HARD", 1, 900, 0), ("s2", "SOFT", 2, 1800, 0), ("h2", "HARD", 2, 2700, 0)]
+    assert SD.legacy_order(piles) == ["s1", "h1", "s2", "h2"]
+    piles = [("h1", "HARD", 1, 0, 0), ("s1", "SOFT", 1, 900, 0), ("h2", "HARD", 2, 1800, 0), ("s2", "SOFT", 2, 2700, 0)]
+    assert SD.legacy_order(piles) == ["h1", "s1", "h2", "s2"]
+    assert SD.legacy_order([("x", "HARD", None, 0, 0)]) is None
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     bad = 0

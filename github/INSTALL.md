@@ -37,14 +37,14 @@ including straight lines, arcs, circles and joined lines, and counts the piles.
 1. Open Revit 2026 → **pyRevit** tab → **Settings** (click the pyRevit logo button).
 2. Find **Custom Extension Directories** → **Add folder** → select `C:\pyRevit-Ext\SBP-pyRevit`
 3. Click **Save Settings and Reload**.
-4. A new **SBP** tab appears with **SBP Wall** and **SBP Count**. ✅
+4. A new **ERSS** tab appears with **SBP Wall** and **SBP Count**. ✅
 
 ---
 
 ## How to use it (quick start)
 1. Open a **plan view**. The pile family **`ICSPL_Pile`** must be loaded in the project.
 2. Draw the "other structure" line with **Model Line**: any shape (line, arc, circle, spline or several joined lines).
-3. Select the line → **SBP** tab → **SBP Wall**.
+3. Select the line → **ERSS** tab → **SBP Wall**.
 4. Fill in the settings: wall name, pile type, level, c/c spacing, gap (min 150), Cut-off Level and Toe Levels.
 5. **Click on the side** of the line where the wall should go.
 6. The piles are placed, and a report shows the **HARD / SOFT / TOTAL** counts. Marks look like `SBP1-H001` / `SBP1-S001`.
@@ -66,8 +66,8 @@ That's it. You don't need to download or copy anything else.
 ## Troubleshooting
 | Problem | Fix |
 |---|---|
-| No **SBP** tab | Check Step 4: the folder must be `C:\pyRevit-Ext\SBP-pyRevit` (the one that contains `SBP.extension`). Then Reload. |
-| **Two** SBP tabs | An old copy is in the extension list. Remove it in pyRevit Settings → Reload. |
+| No **ERSS** tab | Check Step 4: the folder must be `C:\pyRevit-Ext\SBP-pyRevit` (the one that contains `SBP.extension`). Then Reload. |
+| **Two** ERSS tabs | An old copy is in the extension list. Remove it in pyRevit Settings → Reload. |
 | "Family 'ICSPL_Pile' is not loaded" | Load the ICSPL_Pile family into your project. |
 | "Open a plan view first" | Switch to a floor or structural plan, then run again. |
 | Can't see SBP-pyRevit in GitHub Desktop | Accept the GitHub invite email, then File → Clone repository again. |

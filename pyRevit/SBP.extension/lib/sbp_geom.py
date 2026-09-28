@@ -258,3 +258,131 @@ def layout_ends(pts, closed, spacing, start_type="HARD", end_type="HARD",
     lo = 1 if skip_start else 0
     hi = len(centres) - 1 if skip_end else len(centres)
     return centres[lo:hi], kinds[lo:hi], step, total
+
+
+# ---------------------------------------------------------------- pile labels (Number button)
+def pile_tangents(pts, closed):
+    """Unit direction of the wall at each pile, from its neighbours (piles in draw order)."""
+    n = len(pts)
+    res = []
+    for i in range(n):
+        if closed and n > 2:
+            a, b = pts[i - 1], pts[(i + 1) % n]
+        else:
+            a, b = pts[max(i - 1, 0)], pts[min(i + 1, n - 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dy) or 1.0
+        res.append((dx / L, dy / L))
+    return res
+
+
+def inside_sign(pts, closed, line_side=None):
+    """+1 when the wall's inside is on the left of its draw direction, -1 on the right.
+
+    Closed wall: the inside of the loop. Open wall: the side of the drawn line; line_side is SBP Wall's
+    saved 'side' (the wall lies on that side of the line, so the line is on the other side of the wall).
+    Without it: the side the wall bends towards; a straight wall without saved data: left.
+    """
+    if closed and len(pts) > 2:
+        area = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
+        return 1 if area > 0 else -1
+    if line_side:
+        return -1 if line_side > 0 else 1
+    turn = 0.0
+    for i in range(1, len(pts) - 1):
+        a = (pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+        b = (pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+        turn += math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1])
+    if abs(turn) > math.radians(5.0):
+        return 1 if turn > 0 else -1
+    return 1
+
+
+def readable_angle(ang):
+    """Text direction turned so it never reads upside down: (-90, +90] degrees, in radians."""
+    while ang > math.pi / 2 + 1e-9:
+        ang -= math.pi
+    while ang <= -math.pi / 2 + 1e-9:
+        ang += math.pi
+    return ang
+
+
+def _box(cx, cy, ang, a, b):
+    """Label box: centre, text direction e, across direction f, half sizes a (along e) and b (along f)."""
+    c, s = math.cos(ang), math.sin(ang)
+    return (cx, cy, (c, s), (-s, c), a, b)
+
+
+def _boxes_hit(p, q, gap):
+    """True when two boxes are closer than `gap` (separating-axis test)."""
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    if math.hypot(dx, dy) >= math.hypot(p[4], p[5]) + math.hypot(q[4], q[5]) + gap:
+        return False
+    for ax in (p[2], p[3], q[2], q[3]):
+        rp = p[4] * abs(ax[0] * p[2][0] + ax[1] * p[2][1]) + p[5] * abs(ax[0] * p[3][0] + ax[1] * p[3][1])
+        rq = q[4] * abs(ax[0] * q[2][0] + ax[1] * q[2][1]) + q[5] * abs(ax[0] * q[3][0] + ax[1] * q[3][1])
+        if abs(dx * ax[0] + dy * ax[1]) >= rp + rq + gap:
+            return False
+    return True
+
+
+def _box_circle_hit(p, c, gap):
+    """True when a box is closer than `gap` to a circle (x, y, r)."""
+    dx, dy = c[0] - p[0], c[1] - p[1]
+    u = dx * p[2][0] + dy * p[2][1]
+    v = dx * p[3][0] + dy * p[3][1]
+    cu = max(-p[4], min(p[4], u))
+    cv = max(-p[5], min(p[5], v))
+    return math.hypot(u - cu, v - cv) < c[2] + gap
+
+
+def place_labels(labels, circles, rects=(), offset=0.0, gap=0.0):
+    """Places one label next to each pile so that no two overlap, and none covers a pile or another box.
+
+    labels:  dicts x, y (pile centre), r (pile radius), tx, ty (wall direction at the pile),
+             side (+1 = label on the left of that direction, -1 = right), w, h (text box, unrotated),
+             angle (text direction in radians; the text is turned so it never reads upside down),
+             alt (optional second text direction, tried only when `angle` fits nowhere).
+    circles: (x, y, r) that labels must not cover, e.g. all piles nearby (a label's own pile is skipped).
+    rects:   boxes already on the drawing: (cx, cy, angle, w, h), e.g. other tags in the view.
+    Each label sits with the near edge of its text `offset` from its own pile's edge: one label per pile,
+    never stacked in rows. In this order, the first place that touches nothing is used:
+      1. the chosen side; 2. the other side of the wall, next to the same pile (so on a straight wall whose
+      text is longer than one c/c the labels alternate sides); 3. a small nudge on either side (at most
+      1.5 text heights out, or 0.6 text lengths along the wall, the smallest move first); 4. `alt`, the same way.
+    If every try touches, the one that touches the fewest is used.
+    Returns [(cx, cy, angle, nudged, clear, turned, flipped)] in the same order: turned = `alt` was used,
+    flipped = placed on the other side of the wall.
+    """
+    placed = [_box(r[0], r[1], r[2], r[3] / 2.0, r[4] / 2.0) for r in rects]
+    out = []
+    for lb in labels:
+        a, b = lb["w"] / 2.0, lb["h"] / 2.0
+        s0 = 1 if lb["side"] >= 0 else -1
+        t = (lb["tx"], lb["ty"])
+        nudges = sorted(((dn * b, dt * a) for dn in (0.0, 1.0, 2.0, 3.0) for dt in (0.0, 0.6, -0.6, 1.2, -1.2)
+                         if dn or dt), key=lambda v: math.hypot(v[0], v[1]))
+        angles = [lb["angle"]] + ([lb["alt"]] if lb.get("alt") is not None else [])
+        tries = []                                   # (side, text angle, turned, flipped, (push out, slide along))
+        for k, raw in enumerate(angles):
+            tries += [(s0, raw, k, False, (0.0, 0.0)), (-s0, raw, k, True, (0.0, 0.0))]
+            tries += [(s, raw, k, s != s0, nd) for nd in nudges for s in (s0, -s0)]
+        best = None
+        for s, raw, turned, flipped, (dn, dt) in tries:
+            n = (-t[1] * s, t[0] * s)
+            ang = readable_angle(raw)
+            e, f = (math.cos(ang), math.sin(ang)), (-math.sin(ang), math.cos(ang))
+            depth = a * abs(e[0] * n[0] + e[1] * n[1]) + b * abs(f[0] * n[0] + f[1] * n[1])   # half size along n
+            d = lb["r"] + offset + depth + dn
+            box = _box(lb["x"] + n[0] * d + t[0] * dt, lb["y"] + n[1] * d + t[1] * dt, ang, a, b)
+            hits = sum(1 for q in placed if _boxes_hit(box, q, gap))
+            hits += sum(1 for c in circles
+                        if (abs(c[0] - lb["x"]) > 1e-9 or abs(c[1] - lb["y"]) > 1e-9) and _box_circle_hit(box, c, gap))
+            if best is None or hits < best[1]:
+                best = (box, hits, bool(dn or dt), ang, bool(turned), flipped)
+            if hits == 0:
+                break
+        box, hits, nudged, ang, turned, flipped = best
+        placed.append(box)
+        out.append((box[0], box[1], ang, nudged, hits == 0, turned, flipped))
+    return out

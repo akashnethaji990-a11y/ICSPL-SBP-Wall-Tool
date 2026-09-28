@@ -3,7 +3,7 @@
 
 This is a copy of the form's layout only. It does NOT place piles. Use it to check wording,
 field order and defaults before changing the real script:
-pyRevit/SBP.extension/SBP.tab/Piling.panel/SBP Wall.pushbutton/script.py (function ask_inputs).
+pyRevit/SBP.extension/ERSS.tab/Piling.panel/SBP Wall.pushbutton/script.py (function ask_inputs).
 """
 import tkinter as tk
 from tkinter import ttk, messagebox

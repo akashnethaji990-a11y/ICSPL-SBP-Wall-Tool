@@ -84,14 +84,18 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
     data after a rebuild), join rules (`classify_join`, `end_setup`).
   - `lib/sbp_revit.py`: Revit helpers shared by all buttons (lookups, chain, placing, levels
     calibration, joins, typed data copy, Extensible Storage wall settings, HARD/SOFT look).
-  - `SBP.tab/Piling.panel/bundle.yaml`: button order.
+  - `ERSS.tab/Piling.panel/bundle.yaml`: button order. The ribbon tab is **ERSS** (renamed from SBP on
+    26 Sep so that other ERSS tools can go on it later). The tab name = the folder name.
   - `SBP Wall.pushbutton`: create a wall. rpw FlexForm with fallback prompts; last-used values in
     `%APPDATA%\SBPTool\settings.json`; per-wall settings saved in the model.
   - `SBP Edit.pushbutton`, `SBP Select.pushbutton`, `SBP Line.pushbutton`: new 25 Sep (see HISTORY §11).
   - `lib/sbp_draw.py`: draw-then-build for SBP Wall (26 Sep, HISTORY §14). PostCommand(ModelLine) →
     Idling handler (only while waiting) → env var `SBP_DRAWN` → re-posts the SBP Wall button
-    (`CustomCtrl_%CustomCtrl_%SBP%Piling%SBP Wall`). SBP Wall uses `__persistentengine__ = True`.
+    (`CustomCtrl_%CustomCtrl_%ERSS%Piling%SBP Wall`, built from the tab/panel folder names by
+    `_wall_cmd_id()`). SBP Wall uses `__persistentengine__ = True`.
   - `SBP Count.pushbutton`: counts HARD/SOFT per wall.
+  - `Number.pushbutton` (28 Sep, HISTORY §19): layout-plan numbers (SP1/HP1 ...) into Mark. WPF dialog
+    `NumberWindow.xaml` (event names bind to methods of `NumberWindow` in script.py).
 - `tests/test_sbp_geom.py`, `tests/test_sbp_data.py`: offline tests. Run with `python tests/<file>`.
 - Button icons: `icon.png` (light Revit theme) + `icon.dark.png` (dark theme) in each `.pushbutton`,
   made by `tools/make_icons.py` (edit the SVGs there, run it, then pyRevit → Reload).
@@ -102,8 +106,27 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
 - The old backup `SBP.extension_v1` was deleted (it would duplicate the SBP tab).
 
 ## Current logic (what the code does NOW: v1 spacing + editable walls, 25 Sep)
-- Marks are `SBP1-H001` / `SBP1-S001`; Comments are `HARD PILE` / `SOFT PILE`. A wall's piles are
-  found by exact wall name (`SBP1` never picks `SBP1-A`).
+- SBP Wall gives marks `SBP1-H001` / `SBP1-S001` and Comments `HARD PILE` / `SOFT PILE`.
+- **The wall identity is NOT the Mark any more (28 Sep):**
+  - Each pile has hidden data `SBPPileData` (Wall, Kind, Seq = place along the wall).
+  - `wall_of` / `kind_of` read that data first, then fall back to old marks for piles made before 28 Sep.
+  - A wall's piles are found by exact wall name (`SBP1` never picks `SBP1-A`).
+- **Number:**
+  - Mark = prefix + number, in draw order. SOFT and HARD are counted separately.
+  - The numbers run on across the walls of the same Level.
+  - Continue = the highest mark with that prefix on the same level, ignoring the walls being numbered.
+  - An SBP Edit rebuild clears the numbers and tells the user to run Number again.
+  - **Labels (28 Sep, HISTORY §20):**
+    - Number also places Structural Foundation tags in the current plan view. The settings are the tag type,
+      the side per wall (Outside default, saved as `label_side`), the offset from the pile edge (**50** default)
+      and the rotation (**Fixed 0 = horizontal in the view** default / Along / Across). Defaults changed in
+      HISTORY §21.
+    - **One label per pile, never stacked in rows.** The layout is `sbp_geom.place_labels`: own side, then the
+      other side of the wall, then a small nudge, then along/across. It never overlaps and reports the labels it
+      had to move.
+    - Number tags carry hidden data `SBPNumberLabel`. A re-run moves the same tag, and a second one on a pile is
+      deleted.
+    - `TAG_ANGLE_SIGN` needs checking in Revit.
 - **SBP Wall never deletes or replaces piles** (26 Sep): the name field suggests the next free name, and
   an existing name is refused. Changing a wall = SBP Edit. Deleting = by hand.
 - **Line sources for SBP Wall:** selected lines, **selected reference planes** (trimmed at their crossings,
@@ -153,7 +176,7 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
 
 ## Status
 - **Done:**
-  - Step 1: pyRevit 5.2.0 installed and attached to Revit 2026; the SBP tab loads.
+  - Step 1: pyRevit 5.2.0 installed and attached to Revit 2026; the SBP tab loads (now named ERSS).
   - Step 2: the first Revit run worked (43 piles, 22H/21S; cut-off/toe correct; 150 gap OK;
     SBP Count OK).
   - 25 Sep: editable walls (option 3), joins, HARD/SOFT look, `remove_loops` fix, offline tests
@@ -163,6 +186,11 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
   - The invisible-line fix is still unverified.
   - The v2 spacing rules (R2–R7) are on hold for the senior review of the drawing
     (https://claude.ai/artifact/ViXBhGCCNzFRQXTaJVkP1N) and the A/B question.
+- **28 Sep:**
+  - Number button built (HISTORY §19). Its labels (tags) were added in §20, and the Revit test lists are there.
+  - Tab renamed ERSS (§18).
+  - None of this is tested in Revit yet.
+  - Preview: https://claude.ai/artifact/LUc6A85aiTBcFFLfxCVnyg.
 - **Exact next step (morning of 26 Sep):**
   1. §11 step 1 passed (26 Sep); icons added (HISTORY §13). Akash reloads, then runs §11 steps 2–8 in
      `TESTING MODEL\SBP TEST MODEL.rvt` and sends screenshots of each report. Fix what fails.
@@ -173,5 +201,6 @@ closed) → a Secant Bored Pile (SBP) wall is created along it, HARD and SOFT pi
   3. When he brings back the seniors' answer on the drawing, continue with v2.
 - Git: repo on branch `main`; the initial commit c1ca1d8 has all the 25 Sep code. Caches are now in
   `.gitignore` and the .pyc files are untracked (26 Sep, not committed yet).
-- Walkthrough preview of the buttons: https://claude.ai/artifact/MEb9pt9aLst1mHvLNRSsRB.
+- Walkthrough preview of the buttons: https://claude.ai/artifact/MEb9pt9aLst1mHvLNRSsRB (v2 on 26 Sep, 9 steps
+  covering everything up to HISTORY §16; see §17).
 - Later ideas: schedules, an SBP Delete button, renaming a wall.

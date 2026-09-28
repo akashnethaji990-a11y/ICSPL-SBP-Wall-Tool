@@ -18,8 +18,24 @@ from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 
 from pyrevit import script
 
-# pyRevit's id for the SBP Wall button (tab SBP, panel Piling): see GenericUICommand.control_id
-WALL_CMD_ID = "CustomCtrl_%CustomCtrl_%SBP%Piling%SBP Wall"
+
+def _wall_cmd_id():
+    """pyRevit's id for the SBP Wall button: CustomCtrl_%CustomCtrl_%<tab>%<panel>%SBP Wall, built from
+    the folder names (see GenericUICommand.control_id), so renaming the tab or panel folder keeps working."""
+    ext = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        for tab in sorted(os.listdir(ext)):
+            if not tab.endswith(".tab"):
+                continue
+            for panel in sorted(os.listdir(os.path.join(ext, tab))):
+                if panel.endswith(".panel") and os.path.isdir(os.path.join(ext, tab, panel, "SBP Wall.pushbutton")):
+                    return "CustomCtrl_%CustomCtrl_%{}%{}%SBP Wall".format(tab[:-len(".tab")], panel[:-len(".panel")])
+    except OSError:
+        pass
+    return "CustomCtrl_%CustomCtrl_%ERSS%Piling%SBP Wall"
+
+
+WALL_CMD_ID = _wall_cmd_id()
 ENV_DRAWN = "SBP_DRAWN"          # "<document title>|<uid>,<uid>,..." of the lines just drawn
 START_DELAY_S = 0.8              # ignore the Idling that can come before the line tool has started
 

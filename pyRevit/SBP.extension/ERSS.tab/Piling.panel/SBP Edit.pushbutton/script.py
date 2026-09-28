@@ -139,7 +139,7 @@ def edit_round(piles, rnd):
     """One round: form for the chosen walls, apply, report."""
     names = sorted(set(SR.wall_of(p) for p in piles if SR.wall_of(p)))
     if not names:
-        warn("Select piles of an SBP wall (marks like SBP1-H001).")
+        warn("Select piles of an SBP wall.")
     saved = SR.load_walls(doc)
     missing = [n for n in names if n not in saved]
     walls = [n for n in names if n in saved]
@@ -220,6 +220,8 @@ def edit_round(piles, rnd):
             continue
         if rebuild:
             p["mode"] = "rebuild"
+            # layout numbers (Number button) do not survive a rebuild: the new piles get SBP Wall's marks
+            p["numbered"] = any(SR.mark_of(fi) and not SD.is_default_mark(SR.mark_of(fi), name) for fi, k in p["cur"])
         elif any(k in SD.LEVEL_KEYS for k in wchanged):
             p["mode"] = "levels"
         elif lines_ok and after["invisible"] != all(SR.is_invisible(e) for e in p["elements"]):
@@ -230,6 +232,10 @@ def edit_round(piles, rnd):
     if rb:
         msg = "\n".join("{}: {} piles will be replaced by {} piles ({}).".format(
             p["name"], len(p["cur"]), len(p["centres"]), ", ".join(p["why"])) for p in rb)
+        numbered = [p["name"] for p in rb if p.get("numbered")]
+        if numbered:
+            msg += ("\n\nPile numbers (Number button) of {} are cleared by the rebuild: run Number again after."
+                    .format(", ".join(numbered)))
         if not forms.alert(msg + "\n\nTyped data (Loading, BH Ref ...) is copied to the nearest new pile of the same type."
                                  "\nContinue?", title="SBP Edit", yes=True, no=True):
             raise Skip()
@@ -319,6 +325,8 @@ def edit_round(piles, rnd):
                 rows.append(["Typed data copied", "{} piles".format(len(p["copied"])) +
                              (", {} not copied".format(len(p["lost"])) if p["lost"] else "")])
                 rows.append(["SOFT piles cut", p.get("cut", "")])
+                if p.get("numbered"):
+                    rows.append(["Pile numbers", "cleared by the rebuild: run Number again"])
             for kind in (SR.HARD, SR.SOFT):
                 if kind in p.get("check", {}):
                     rows.append(["Cut-off / Toe {} (mm)".format(kind), "{:.0f} / {:.0f}".format(*p["check"][kind])])

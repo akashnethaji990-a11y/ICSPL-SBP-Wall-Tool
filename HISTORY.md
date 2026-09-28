@@ -548,3 +548,177 @@ Tests: 22 pass (2 new: next free name, data-copy cap). Parse, IronPython and ASC
 3. Check the report's Drawn line row: `<Invisible lines>`, or "uses the line style 'SBP Invisible'".
 4. SBP Edit: edit one wall, Apply → it asks again → edit another → Esc.
 5. The SOFT piles cut row in the report, and 3D.
+
+## 17. 26 Sep: walkthrough preview updated (no code change)
+Akash: "all okay, now give animation preview for all so far we have done".
+- Same link, version 2: https://claude.ai/artifact/MEb9pt9aLst1mHvLNRSsRB (shared "Anyone with the link").
+- 9 animated steps, with pile counts worked out using today's spacing rule:
+  1. Draw SBP1 with the Draw tools (line + arc), Esc → form → side: 43 piles (22 H / 21 S), c/c 873.2.
+  2. SBP2 drawn from SBP1's end: "continues from SBP1-H022 (HARD), next pile SOFT", 12 piles.
+  3. 4 reference planes → SBP3, closed, 30 piles (15 / 15).
+  4. The name of an existing wall is refused (next free name SBP4).
+  5. SBP Select, HARD only.
+  6. SBP Edit loop: SBP2 cut-off -300 (same piles, data kept) → SBP1 c/c 850 → 45 piles, data
+     H014 → H015 (635 mm, listed as "moved more than half a c/c") → Esc.
+  7. SBP Line: drag SBP2's end +2 m → SBP Edit → 14 piles, line hidden again.
+  8. 3D: SOFT cut by HARD, before/after.
+  9. SBP Count.
+- The page separates what Akash has confirmed in Revit from what was built on 26 Sep and is not yet tested.
+- Source: scratchpad `sbp_tab_walkthrough.html` (`#selftest` runs all steps; `#scene6` opens one step).
+- Version 3 (Akash: "I need with subtitle"): video-style subtitles at the bottom of the mock window explain
+  every action and result. Each one stays up long enough to read. A "CC Subtitles: On/Off" button
+  toggles them, and the browser remembers the choice.
+
+## 18. 26 Sep: ribbon tab renamed SBP → ERSS
+Akash: rename the tab to "ERSS" because more tools will be added later.
+- The folder was renamed with `git mv`, from `SBP.tab` to `ERSS.tab`. pyRevit uses the folder name as the tab title.
+  The panel (Piling), the buttons, the wall names (SBP1...), the marks and the extension folder
+  (`SBP.extension`) are unchanged.
+- `sbp_draw.py` used a fixed button id with the tab name in it (for the draw → form hand-off). It now
+  builds the id from the folder names (`_wall_cmd_id()` → `CustomCtrl_%CustomCtrl_%ERSS%Piling%SBP Wall`),
+  so later renames of the tab or panel folder cannot break it.
+- Text updated: README, install.ps1, github/INSTALL.md, github/GitHub_Guide_Akash.md, tools/make_icons.py,
+  preview/ui_preview.py. Tests: 27 pass.
+- **Revit check:** pyRevit → Reload. There should be one **ERSS** tab and no SBP tab. Then SBP Wall → draw → Esc
+  must still open the form by itself.
+
+## 19. 28 Sep: Number button (layout-plan pile numbers), built, not yet run in Revit
+**Request (pasted spec):** a Piling-panel button "Number" writes pile numbers into Mark (layout plans only). It
+works in draw order from the wall's start end, e.g. SP1, HP1, SP2, HP2. The prefixes are editable (default SP / HP,
+e.g. C1-SP). There are two radio buttons, "Continue from the last number" and "Start new at 1", and a live line
+"continuing from SP7, next will be SP8". The numbering is continuous across walls "on the same layer". Nothing is
+written until confirmed.
+
+**Problem found and decided (Akash, 28 Sep):** Mark was the wall identity (`SBP1-H014` → wall SBP1), so SP/HP
+marks would have cut the piles off from SBP Edit / Select / Line / Count and the joins.
+| Question | Decision |
+|---|---|
+| Where the wall identity goes | **Hidden data on each pile** (Extensible Storage) |
+| "Same layer" | **Same prefix, same Level**: Continue looks only at marks on the same level |
+| SBP Edit rebuild of a numbered wall | **Clear + tell**: new piles get `SBP1-H001` marks, the confirm box and report say "run Number again" |
+
+**Built:**
+- `sbp_revit`: schema `SBPPileData` (GUID 66fb6159-0697-4757-947e-bc71f93daaae; fields Wall, Kind, Seq =
+  place along the wall from the start end). `place_piles` writes it. `wall_of` / `kind_of` read it first, then fall
+  back to the old marks, so walls made before 28 Sep still work. `wall_in_order()` sorts by Seq; for old piles it uses
+  `SD.legacy_order` (H/S numbers from the marks, and positions when the counts are equal).
+- `sbp_data`: `mark_number`, `max_number`, `check_prefixes` (empty, the same, or ending in a digit), `number_plan`
+  (SOFT and HARD counted separately, continuing across walls per level), `range_text`, `continue_text`,
+  `default_mark_parts`, `is_default_mark`, `legacy_order`, `natural_key`. There are 7 new tests (data 19 + geometry 15 pass).
+- `Number.pushbutton`:
+  1. Pick a pile of each wall in order, then press Esc (or pre-select: the walls go in name order).
+  2. The WPF dialog `NumberWindow.xaml` has the 2 prefix boxes, the 2 radio buttons and a live yellow box with
+     "Continuing from SP7, next will be SP8" plus each wall's range. Next is greyed out while a prefix is wrong.
+  3. The confirm box lists each wall's range and any marks already used by other piles (Revit will warn about
+     duplicate Marks).
+  4. One transaction writes the marks. Old piles first get their hidden data.
+  - An open wall starts HARD, so it reads HP1, SP1, HP2, SP2 ... (SOFT and HARD counters are independent).
+  - Continue ignores the marks of the walls being numbered, so numbering a wall again does not continue from its own
+    old numbers.
+- SBP Edit: a rebuild clears the numbers, and the confirm box and the report row "Pile numbers" say so.
+- SBP Count: counts from the hidden data (no more mark parsing).
+- Icon: an orange "SP1" tag on a HARD+SOFT pair (`tools/make_icons.py Number`; the tool now takes icon names and
+  waits for Edge to finish writing).
+- The XAML was checked offline: it loads in WPF (PowerShell XamlReader, events stripped) and the layout looks right.
+
+**Revit test for Akash (after pyRevit → Reload):**
+1. The Piling panel shows Number between SBP Line and SBP Count.
+2. Number → click a pile of SBP1 → Esc → the dialog shows SP/HP and Continue. The live line says "no SP numbers yet".
+3. Next → confirm → the marks read HP1, SP1, HP2 ... from the wall's start. Check with a tag or schedule.
+4. SBP Select / SBP Edit / SBP Count still find SBP1 after numbering.
+5. Number on SBP2 (same level) with Continue → it starts after SBP1's last numbers.
+6. Type C1-SP / C1-HP → the live line updates while typing. Start new → "Starts new at C1-SP1 and C1-HP1".
+7. SBP Edit spacing change on SBP1 → the confirm box warns that the numbers are cleared, and the report says
+   "run Number again".
+
+**Preview (28 Sep):** https://claude.ai/artifact/LUc6A85aiTBcFFLfxCVnyg (private).
+- An interactive mock-up of the ERSS tab. Click Number → pick walls → Esc → the dialog (editable prefixes, radio
+  buttons, live line) → confirm → the marks are written along each wall.
+- A demo with subtitles and zoom buttons.
+- Example: SBP3 was numbered earlier (SP1–15 / HP1–15). With Continue, SBP1 gets SP16–SP36 / HP16–HP37 and
+  SBP2 gets SP37–SP42 / HP38–HP43. Start new shows 30 duplicates in the confirm box.
+- Source: scratchpad `sbp_number_preview.html` (`#selftest` runs the demo fast).
+
+## 20. 28 Sep: Number places the labels (tags) too, built, not yet run in Revit
+**Request:** three dialog controls for the labels:
+- the side (inside / outside the pile line, default outside, per wall);
+- the offset from the pile edge;
+- the rotation (default along the wall at each pile).
+
+Labels must not overlap on tight or curved runs like SBP3. Everything else in Number stays the same.
+
+**Found:** the real Number only wrote Mark. The labels were drawn by the preview only. In Revit a label = a tag, so
+Number now also places Structural Foundation tags in the current plan view.
+
+**Built:**
+- **Dialog** (`NumberWindow.xaml`): a "Labels" section under the unchanged prefix / Continue part.
+  - **Tag type** (4th control, needed: which tag shows Mark; "No labels (marks only)" keeps the old behaviour).
+  - **Offset from pile edge** (default 200 mm).
+  - **Rotation**: Along the wall (default), Across, or Fixed + angle.
+  - **Label side per wall**: Outside (default) / Inside, one row per wall, saved in the wall data (`label_side`).
+  - The live box adds "(labels outside)" per wall and one "Labels: ..." line. Next is greyed out for a bad offset or angle.
+  - The labels are off, with a note, when the view is not a plan or no foundation tag is loaded.
+- **Inside / outside:** a closed wall uses its loop. An open wall: Inside = the side of the drawn line, from SBP Wall's
+  saved `side`. Without data: the side the wall bends to, else left. The text is turned so it never reads upside down.
+- **No overlap** (`sbp_geom.place_labels`, pure Python):
+  - Each label is placed with its near edge `offset` from the pile edge.
+  - A label that touches another label, any pile on that level, or another tag in the view moves out one row
+    (up to 4, rows 100 mm apart).
+  - Where that is not enough (the inside of tight corners or curves) it turns (along ↔ across), then goes to the
+    other side of the wall.
+  - The report counts the turned and moved labels, and lists any still touching.
+- **Revit** (`SR.place_pile_tags`):
+  1. Create tags (or reuse this type's existing tags on those piles, so a re-run never doubles them) with
+     `TagOrientation.AnyModelDirection`, text along model X.
+  2. Regenerate and measure each tag's box.
+  3. Lay the labels out.
+  4. Set `RotationAngle` (relative to the view's right direction), regenerate, then move `TagHeadPosition` so each
+     box centre lands on its place.
+  - A pile Revit refuses to tag is listed, and the rest are still tagged.
+  - `TAG_ANGLE_SIGN` (sbp_revit.py) flips the turn direction if Revit turns the other way.
+- **Transactions:** a TransactionGroup with the marks first, then the labels. A label error keeps the marks and is
+  reported. Tag type, offset and rotation are remembered in `%APPDATA%\SBPTool\settings.json`.
+- **Tests:** geometry 21 (6 new: inside sign, readable angle, a straight wall staggers in 2 rows when along, across
+  fits in 1 row, the SBP3 rectangle inside/outside × along/across with no overlaps, SBP1's concave arc). Data 19 pass.
+- **Found with SBP3 (7.5 × 5.5 m, 30 piles, 2.5 mm text at 1:200):**
+  - Outside: 0 moved, along uses 2 rows, across uses 1 row.
+  - Inside: 15 to 17 labels do not fit and go outside. There is never an overlap.
+- **Preview v2**, same link (https://claude.ai/artifact/LUc6A85aiTBcFFLfxCVnyg):
+  - the new controls;
+  - the same layout ported to JavaScript;
+  - a 3-part demo: defaults on SBP1/2, SBP3 Across, SBP3 Inside.
+
+**Revit test for Akash** (plan view at 1:200, pyRevit → Reload; a foundation tag that shows Mark must be loaded):
+1. Number on SBP1 + SBP2 with the defaults → one tag per pile. The labels read along the wall, 200 mm clear of the pile
+   edge, staggered where needed, none overlapping.
+2. Check the turn direction on the arc. If the labels turn the wrong way, set `TAG_ANGLE_SIGN = -1.0`.
+3. Run again with Across → the same tags move and turn (no doubles).
+4. SBP3 with Inside → the report counts the labels put outside.
+5. In a 3D view → the labels are off with the note, and only the marks are written.
+
+## 21. 28 Sep: label defaults changed, one label per pile (not yet run in Revit)
+**Request:**
+- Default rotation horizontal (0 deg), so every label reads left to right whatever the wall direction.
+- One label per pile with its own number, and no SP/HP pair at the same place.
+- A smaller default offset, just clear of the pile edge, not floating away.
+- The inside/outside, offset and rotation controls stay as they are.
+
+**Changed:**
+| Item | Before (§20) | Now |
+|---|---|---|
+| Rotation default | Along the wall | **Fixed 0 = horizontal** (the Fixed angle is now measured from the view's horizontal) |
+| Offset default | 200 mm | **50 mm** |
+| Crowded labels | pushed out in rows (up to 4): looked like SP/HP pairs stacked | **never stacked**: 1. own side, 2. other side of the wall (next to the same pile), 3. a small nudge (at most 1.5 text heights out or 0.6 text lengths along, smallest first), 4. along/across only for those modes |
+| Tags per pile | reused one tag of the same type | **one Number label per pile**: Number tags carry hidden data (schema `SBPNumberLabel`, GUID 8f251ee8-64c4-423d-ba51-a7cd2c6754a0); a re-run reuses it (changing its type if needed) and deletes a second Number/same-type tag on that pile. Other tags are left alone. |
+| Remembered values | `number_offset` / `number_rotation` | new keys `number_label_offset` / `number_label_rotation`, so values saved by §20 cannot override the new defaults |
+
+- The layout now runs in the view's own axes (`place_pile_tags`), so "horizontal" and "never upside down" are as
+  seen on the sheet, also in a rotated view.
+- The report says "one per pile, N new, M moved", and how many labels went to the other side or were nudged.
+- **Tests:** geometry 22 (new: a horizontal wall alternates sides; a vertical wall keeps one side; no label is ever
+  far from its own pile; SBP3 in/out × horizontal/along/across; the concave arc). Data 19 pass. The XAML loads.
+- SBP3 with the defaults (outside, horizontal): 6 labels on the other side, 2 nudged, 0 touching.
+- **Preview v3** (same link): the new defaults and a 3-part demo (defaults, Along on SBP3, Inside on SBP3).
+
+**Revit test (after Reload):** Number on SBP1 + SBP2 with the defaults. Expect: every label horizontal and just
+clear of its pile; on the bottom run, labels alternating above and below. Run it again: still one label per pile.

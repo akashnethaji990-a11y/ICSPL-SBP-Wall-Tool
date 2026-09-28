@@ -179,6 +179,109 @@ def test_planes_errors():
             assert words in str(ex), str(ex)
 
 
+# ---------------------------------------------------------------- pile labels (Number button)
+TXT_H = 500.0                      # 2.5 mm text at 1:200
+CHAR = 0.6 * TXT_H
+
+
+def label_run(pts, closed, side, mode="horizontal", offset=50.0, gap=100.0):
+    """Label boxes for piles `pts` (HP/SP numbers), checked: no overlaps, not on a pile, one row only."""
+    tans = G.pile_tangents(pts, closed)
+    labels = []
+    for i, ((x, y), (tx, ty)) in enumerate(zip(pts, tans)):
+        txt = ("HP" if i % 2 == 0 else "SP") + str(i // 2 + 16)
+        along, across = math.atan2(ty, tx), math.atan2(tx * side, -ty * side)
+        ang, alt = {"along": (along, across), "across": (across, along), "horizontal": (0.0, None)}[mode]
+        labels.append({"x": x, "y": y, "r": D / 2, "tx": tx, "ty": ty, "side": side, "w": len(txt) * CHAR,
+                       "h": TXT_H, "angle": ang, "alt": alt})
+    circles = [(x, y, D / 2) for x, y in pts]
+    res = G.place_labels(labels, circles, (), offset, gap)
+    boxes = [G._box(r[0], r[1], r[2], lb["w"] / 2, lb["h"] / 2) for r, lb in zip(res, labels)]
+    for r, lb in zip(res, labels):                                     # next to its own pile, never a far row
+        assert math.hypot(r[0] - lb["x"], r[1] - lb["y"]) <= D / 2 + offset + lb["w"] / 2 + 3 * TXT_H / 2 + 1.2 * lb["w"] / 2 + 1e-6
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            assert not G._boxes_hit(boxes[i], boxes[j], gap - 1e-6), ("labels overlap", i, j)
+        for c in circles:
+            if (c[0], c[1]) != (labels[i]["x"], labels[i]["y"]):
+                assert not G._box_circle_hit(boxes[i], c, gap - 1e-6), ("label on a pile", i)
+    return res
+
+
+def rect_piles():
+    """SBP3: 30 piles on a 7.5 x 5.5 m loop, c/c 866.7."""
+    L = [(10750, 9750), (18250, 9750), (18250, 15250), (10750, 15250)]
+    pts = []
+    for i in range(30):
+        d = 26000.0 * i / 30.0
+        for k in range(4):
+            a, b = L[k], L[(k + 1) % 4]
+            seg = math.hypot(b[0] - a[0], b[1] - a[1])
+            if d <= seg + 1e-9:
+                pts.append((a[0] + (b[0] - a[0]) * d / seg, a[1] + (b[1] - a[1]) * d / seg))
+                break
+            d -= seg
+    return pts
+
+
+def test_inside_sign():
+    sq = [(0, 0), (10, 0), (10, 10), (0, 10)]                        # counter-clockwise loop
+    assert G.inside_sign(sq, True) == 1 and G.inside_sign(list(reversed(sq)), True) == -1
+    assert G.inside_sign([(0, 0), (5, 0), (10, 0)], False, line_side=1) == -1   # wall left of its line
+    assert G.inside_sign([(0, 10), (0, 0), (10, 0)], False) == 1       # bends left: inside on the left
+    assert G.inside_sign([(0, 0), (5, 0), (10, 0)], False) == 1        # straight, no data: left
+
+
+def test_readable_angle():
+    for deg, want in ((0, 0), (90, 90), (-90, 90), (180, 0), (135, -45), (-135, 45), (270, 90)):
+        got = math.degrees(G.readable_angle(math.radians(deg)))
+        assert abs(got - want) < 1e-6, (deg, got)
+
+
+def test_labels_horizontal_wall_alternate_sides():
+    # "HP16" (1200) is longer than one c/c (873): the next label goes to the other side, never a second row
+    pts = [(i * 873.2, 0.0) for i in range(43)]
+    res = label_run(pts, False, -1)                                    # right of the draw direction = below
+    assert all(r[4] for r in res)
+    assert [r[6] for r in res[:4]] == [False, True, False, True]
+    assert abs(res[0][1] - -(600 + 50 + 250)) < 1e-6 and res[1][1] > 0   # just clear of the pile edge
+    assert all(abs(r[2]) < 1e-9 for r in res)                          # horizontal, reads left to right
+
+
+def test_labels_vertical_wall_horizontal_text_one_side():
+    # text height (500) is less than one c/c: every label fits on its own side, just clear of the pile
+    pts = [(750.0, 20000.0 - i * 873.2) for i in range(18)]
+    res = label_run(pts, False, -1)                                    # right of 'down' = the -x side
+    assert all(r[4] and not r[6] for r in res)
+    assert all(abs(r[0] - (750 - 600 - 50 - 600)) < 1e-6 for r in res[:3] if r[0] < 750)
+
+
+def test_labels_along_and_across_one_row():
+    pts = [(i * 873.2, 0.0) for i in range(43)]
+    res = label_run(pts, False, 1, "along")
+    assert all(r[4] for r in res) and [r[6] for r in res[:2]] == [False, True]
+    res = label_run(pts, False, -1, "across")
+    assert all(r[4] and not r[6] for r in res) and all(r[1] < -600 for r in res)
+
+
+def test_labels_rectangle_sbp3_inside_and_outside():
+    pts = rect_piles()
+    inside = G.inside_sign(pts, True)
+    for side in (-inside, inside):                                     # outside, then inside the loop
+        for mode in ("horizontal", "along", "across"):
+            res = label_run(pts, True, side, mode)
+            assert all(r[4] for r in res), (side, mode)
+
+
+def test_labels_arc_concave_side():
+    # SBP1's arc: radius 4250, piles every 873.2 mm; labels on the inner (concave) side converge
+    pts = [(5000 + 4250 * math.cos(math.pi + t), 5000 + 4250 * math.sin(math.pi + t))
+           for t in [k * 873.2 / 4250 for k in range(9)]]
+    for mode in ("horizontal", "along"):
+        res = label_run(pts, False, 1, mode)
+        assert all(r[4] for r in res), mode
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     bad = 0

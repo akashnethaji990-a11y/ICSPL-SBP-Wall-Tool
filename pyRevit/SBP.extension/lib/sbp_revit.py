@@ -7,13 +7,13 @@ user are passed in as callbacks by the button scripts.
 import math
 import clr
 
-from System import Guid, String
+from System import Guid, String, Int32
 from System.Collections.Generic import List
 from Autodesk.Revit.DB import (
     FilteredElementCollector, FamilySymbol, FamilyInstance, Level, CurveElement, XYZ,
     UnitUtils, UnitTypeId, SpecTypeId, UnitFormatUtils, BuiltInParameter, BuiltInCategory,
     ElementId, StorageType, InternalDefinition, GraphicsStyleType, Material, Color, Category,
-    JoinGeometryUtils, Line, Plane, SketchPlane,
+    JoinGeometryUtils, Line, Plane, SketchPlane, IndependentTag, TagOrientation, Reference,
     FillPattern, FillPatternElement, FillPatternTarget, FillPatternHostOrientation,
     OverrideGraphicSettings, ParameterFilterElement, ParameterFilterRuleFactory, ElementParameterFilter,
 )
@@ -37,10 +37,18 @@ MATERIAL_NAME = "ICSPL_Pile"            # both pile types in 3D
 FILTER_NAMES = {HARD: "SBP HARD PILE", SOFT: "SBP SOFT PILE"}
 SBP_LINE_STYLE = "SBP Invisible"        # used (and hidden in the view) if Revit refuses <Invisible lines>
 PLANE_REACH_MM = 5000.0                 # reference planes that stop this short of each other still meet
+# Pile labels (Number button): tags of category Structural Foundation Tags that show the Mark.
+LABEL_GAP_MM = 100.0                    # clear space between two labels, and between a label and a pile
+TAG_ANGLE_SIGN = 1.0                    # Revit turns tags counter-clockwise; use -1.0 if labels turn the wrong way
 # Typed pile data that must NOT follow a pile to its new place after a rebuild.
 DATA_SKIP = ("Depth", "X-Easting", "Y-Northing", "Mark", "Comments", P_OFFSET)
 # Fixed id of the hidden "wall settings" data. Never change it, or saved walls are lost.
 SCHEMA_GUID = Guid("5b3f7c2e-8d41-4a6f-9e2b-7c1a0d4e6f38")
+# Fixed id of the hidden data on each pile (wall, HARD/SOFT, place along the wall). Never change it.
+# Mark is free for layout numbers (SP1, HP1 ...) because the wall is known from this data.
+PILE_SCHEMA_GUID = Guid("66fb6159-0697-4757-947e-bc71f93daaae")
+# Fixed id of the hidden mark on the tags the Number button places (one Number label per pile). Never change it.
+LABEL_SCHEMA_GUID = Guid("8f251ee8-64c4-423d-ba51-a7cd2c6754a0")
 
 
 # ------------------------------------------------------------------ report text
@@ -94,8 +102,47 @@ def mark_of(fi):
     return (p.AsString() or "") if p else ""
 
 
+def _pile_schema(create=False):
+    s = Schema.Lookup(PILE_SCHEMA_GUID)
+    if s is not None or not create:
+        return s
+    b = SchemaBuilder(PILE_SCHEMA_GUID)
+    b.SetSchemaName("SBPPileData")
+    b.SetReadAccessLevel(AccessLevel.Public)
+    b.SetWriteAccessLevel(AccessLevel.Public)
+    b.AddSimpleField("Wall", clr.GetClrType(String))
+    b.AddSimpleField("Kind", clr.GetClrType(String))
+    b.AddSimpleField("Seq", clr.GetClrType(Int32))
+    return b.Finish()
+
+
+def pile_tag(fi):
+    """The pile's hidden data: {'wall', 'kind', 'seq'} (seq = place along the wall from its start
+    end, 0 = first), or None for piles made before 28 Sep and non-SBP piles."""
+    s = _pile_schema()
+    if s is None:
+        return None
+    ent = fi.GetEntity(s)
+    if ent is None or not ent.IsValid():
+        return None
+    return {"wall": ent.Get[String]("Wall"), "kind": ent.Get[String]("Kind"), "seq": ent.Get[Int32]("Seq")}
+
+
+def tag_pile(fi, wall, kind, seq):
+    """Write the pile's hidden data. Call inside a transaction."""
+    ent = Entity(_pile_schema(True))
+    ent.Set[String]("Wall", wall)
+    ent.Set[String]("Kind", kind)
+    ent.Set[Int32]("Seq", seq)
+    fi.SetEntity(ent)
+
+
 def wall_of(fi):
-    """'SBP1-H014' -> 'SBP1'. None when the mark is not an SBP mark."""
+    """The pile's wall ('SBP1') from its hidden data, else from an old mark ('SBP1-H014' -> 'SBP1').
+    None for piles that are not in an SBP wall."""
+    t = pile_tag(fi)
+    if t and t["wall"]:
+        return t["wall"]
     mark = mark_of(fi)
     if "-" not in mark:
         return None
@@ -104,15 +151,19 @@ def wall_of(fi):
 
 
 def kind_of(fi):
-    """HARD / SOFT from Comments, else from the mark (H.../S...). None if unknown."""
+    """HARD / SOFT from the hidden data, else Comments, else the old mark (H.../S...). None if unknown."""
+    t = pile_tag(fi)
+    if t and t["kind"] in (HARD, SOFT):
+        return t["kind"]
     p = fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
     c = ((p.AsString() or "") if p else "").strip().upper()
     if c.startswith(HARD):
         return HARD
     if c.startswith(SOFT):
         return SOFT
-    if wall_of(fi):
-        return {"H": HARD, "S": SOFT}.get(mark_of(fi).rsplit("-", 1)[1][:1].upper())
+    mark = mark_of(fi)
+    if "-" in mark and wall_of(fi):
+        return {"H": HARD, "S": SOFT}.get(mark.rsplit("-", 1)[1][:1].upper())
     return None
 
 
@@ -126,8 +177,31 @@ def wall_piles(doc, wall):
     return [(fi, kind_of(fi)) for fi in all_piles(doc) if wall_of(fi) == wall]
 
 
+def wall_in_order(piles):
+    """piles [(pile, kind)] of one wall in draw order (from the start end of the wall), or None when
+    the order cannot be known (old piles whose marks were changed)."""
+    tags = [pile_tag(fi) for fi, k in piles]
+    if piles and all(t is not None for t in tags):
+        order = sorted(range(len(piles)), key=lambda i: tags[i]["seq"])
+    else:
+        items = []
+        for i, (fi, k) in enumerate(piles):
+            parts = SD.default_mark_parts(mark_of(fi))
+            x, y = xy(fi)
+            items.append((i, k, parts[2] if parts else None, x, y))
+        order = SD.legacy_order(items)
+        if order is None:
+            return None
+    return [piles[i] for i in order]
+
+
+def level_name(doc, fi):
+    lv = doc.GetElement(fi.LevelId) if fi.LevelId != ElementId.InvalidElementId else None
+    return lv.Name if lv is not None else "(no level)"
+
+
 def wall_names(doc):
-    """Every wall name already used in the model (pile marks + saved walls)."""
+    """Every wall name already used in the model (piles + saved walls)."""
     names = set(n for n in (wall_of(fi) for fi in all_piles(doc)) if n)
     names.update(load_walls(doc).keys())
     return names
@@ -541,13 +615,14 @@ def plan_wall(doc, items, closed, side, s, diameter, others, ask_kind):
 
 # ------------------------------------------------------------------ placing and levels
 def place_piles(doc, symbol, level, wall, centres, kinds):
-    """Place piles with marks WALL-H001 / WALL-S001 and Comments HARD PILE / SOFT PILE."""
+    """Place piles in wall order with marks WALL-H001 / WALL-S001, Comments HARD PILE / SOFT PILE,
+    and the hidden pile data (wall, type, place along the wall)."""
     if not symbol.IsActive:
         symbol.Activate()
         doc.Regenerate()
     placed = []
     nh = ns = 0
-    for (x, y), kind in zip(centres, kinds):
+    for seq, ((x, y), kind) in enumerate(zip(centres, kinds)):
         fi = doc.Create.NewFamilyInstance(XYZ(x, y, level.ProjectElevation), symbol, level, StructuralType.Footing)
         if kind == HARD:
             nh += 1
@@ -557,6 +632,7 @@ def place_piles(doc, symbol, level, wall, centres, kinds):
             mark = "{}-S{:03d}".format(wall, ns)
         fi.get_Parameter(BuiltInParameter.ALL_MODEL_MARK).Set(mark)
         fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS).Set(kind + " PILE")
+        tag_pile(fi, wall, kind, seq)
         placed.append((fi, kind))
     doc.Regenerate()
     return placed
@@ -693,6 +769,203 @@ def restore_data(snap, placed, max_dist=None):
                 pass
         copied.append((olds[i][3], mark_of(fi), to_mm(d)))
     return sorted(copied), [olds[i][3] for i in lost]
+
+
+# ------------------------------------------------------------------ pile labels (tags), Number button
+def foundation_tag_types(doc):
+    """{'Family : Type': FamilySymbol} of the Structural Foundation tags loaded in the model."""
+    res = {}
+    col = FilteredElementCollector(doc).OfClass(FamilySymbol).OfCategory(BuiltInCategory.OST_StructuralFoundationTags)
+    for s in col:
+        res["{} : {}".format(s.Family.Name if s.Family is not None else "?", type_name(s))] = s
+    return res
+
+
+def default_tag_name(doc, types):
+    """Name of the model's default Structural Foundation tag, else the first one (None if none)."""
+    try:
+        tid = doc.GetDefaultFamilyTypeId(ElementId(BuiltInCategory.OST_StructuralFoundationTags))
+        for name, s in types.items():
+            if s.Id == tid:
+                return name
+    except Exception:
+        pass
+    return sorted(types.keys())[0] if types else None
+
+
+def _idv(eid):
+    try:
+        return eid.Value
+    except AttributeError:
+        return eid.IntegerValue
+
+
+def _norm_angle(a):
+    while a > math.pi:
+        a -= 2 * math.pi
+    while a <= -math.pi:
+        a += 2 * math.pi
+    return a
+
+
+def _bbox_xy(el, view):
+    bb = el.get_BoundingBox(view)
+    if bb is None:
+        return None
+    return (bb.Min.X + bb.Max.X) / 2.0, (bb.Min.Y + bb.Max.Y) / 2.0, bb.Max.X - bb.Min.X, bb.Max.Y - bb.Min.Y
+
+
+def _label_schema(create=False):
+    s = Schema.Lookup(LABEL_SCHEMA_GUID)
+    if s is not None or not create:
+        return s
+    b = SchemaBuilder(LABEL_SCHEMA_GUID)
+    b.SetSchemaName("SBPNumberLabel")
+    b.SetReadAccessLevel(AccessLevel.Public)
+    b.SetWriteAccessLevel(AccessLevel.Public)
+    b.AddSimpleField("Wall", clr.GetClrType(String))
+    return b.Finish()
+
+
+def _is_number_label(tag):
+    """True for a tag placed by the Number button."""
+    s = _label_schema()
+    if s is None:
+        return False
+    ent = tag.GetEntity(s)
+    return ent is not None and ent.IsValid()
+
+
+def _mark_number_label(tag, wall):
+    """Mark a tag as placed by Number. If Revit refuses, the tag still counts by its type."""
+    try:
+        ent = Entity(_label_schema(True))
+        ent.Set[String]("Wall", wall or "")
+        tag.SetEntity(ent)
+        return True
+    except Exception:
+        return False
+
+
+def place_pile_tags(doc, view, symbol, walls, offset_mm, rotation):
+    """One label (tag) per pile of `walls` in `view`, just clear of the pile, none overlapping.
+    Call inside a transaction.
+
+    walls:    [(piles [(pile, kind)] in draw order, closed, side, wall name)]; side +1 = labels on the left
+              of the draw direction, -1 = on the right.
+    rotation: 'along' / 'across' the wall, or a fixed angle in degrees from the view's horizontal
+              (0 = horizontal: every label reads left to right).
+    One Number label per pile in this view: a Number tag (or a tag of this type) already on the pile is moved,
+    turned and given this type; a second one on the same pile is deleted. Other tags are left alone.
+    Returns {"new", "moved", "removed", "flipped", "nudged", "turned", "touching" (marks),
+    "failed" (marks Revit could not tag, with the first reason)}.
+    """
+    # the layout works in the view's own axes, so "horizontal" and "never upside down" are as seen on the sheet
+    va = math.atan2(view.RightDirection.Y, view.RightDirection.X)
+    ca, sa = math.cos(va), math.sin(va)
+
+    def to_view(x, y):
+        return x * ca + y * sa, -x * sa + y * ca
+
+    def to_model(u, v):
+        return u * ca - v * sa, u * sa + v * ca
+
+    mine = {}
+    for piles, closed, side, wall in walls:
+        for fi, k in piles:
+            mine[_idv(fi.Id)] = fi
+    on_pile, other_boxes = {}, []
+    for tag in FilteredElementCollector(doc, view.Id).OfClass(IndependentTag):
+        try:
+            ids = [_idv(i) for i in tag.GetTaggedLocalElementIds()]
+        except Exception:
+            ids = []
+        hit = [i for i in ids if i in mine]
+        if hit and (_is_number_label(tag) or tag.GetTypeId() == symbol.Id):
+            on_pile.setdefault(hit[0], []).append(tag)
+        else:
+            box = _bbox_xy(tag, view)
+            if box is not None:
+                u, v = to_view(box[0], box[1])
+                other_boxes.append((u, v, -va, box[2], box[3]))
+    reuse, removed = {}, 0
+    for pid, tl in on_pile.items():
+        tl.sort(key=lambda t: (not _is_number_label(t), t.GetTypeId() != symbol.Id))
+        reuse[pid] = tl[0]
+        for extra in tl[1:]:                 # one Number label per pile
+            doc.Delete(extra.Id)
+            removed += 1
+    # 1. one tag per pile, text along model X for measuring
+    runs, tags, flat, failed, made = [], [], [], [], 0
+    for piles, closed, side, wall in walls:
+        run = []
+        for fi, k in piles:
+            tag = reuse.get(_idv(fi.Id))
+            new = tag is None
+            try:
+                if new:
+                    p = fi.Location.Point
+                    tag = IndependentTag.Create(doc, symbol.Id, view.Id, Reference(fi), False,
+                                                TagOrientation.AnyModelDirection, XYZ(p.X, p.Y, p.Z))
+                else:
+                    if tag.GetTypeId() != symbol.Id:
+                        tag.ChangeTypeId(symbol.Id)
+                    if tag.HasLeader:
+                        tag.HasLeader = False
+                    if tag.TagOrientation != TagOrientation.AnyModelDirection:
+                        tag.TagOrientation = TagOrientation.AnyModelDirection
+                tag.RotationAngle = _norm_angle(TAG_ANGLE_SIGN * (0.0 - va))
+                _mark_number_label(tag, wall)
+            except Exception as ex:
+                if new and tag is not None:
+                    try:
+                        doc.Delete(tag.Id)       # no half-made tag left at the pile centre
+                    except Exception:
+                        pass
+                failed.append("{} ({})".format(mark_of(fi), ex) if not failed else mark_of(fi))
+                continue
+            made += 1 if new else 0
+            run.append(fi)
+            tags.append(tag)
+            flat.append(fi)
+        runs.append((run, closed, side))
+    doc.Regenerate()
+    # 2. measure each label, 3. lay them out in the view's axes (pure geometry)
+    levels = set(_idv(fi.LevelId) for fi in flat)
+    circles = [to_view(*xy(fi)) + (get_len(fi, P_RADIUS),) for fi in all_piles(doc) if _idv(fi.LevelId) in levels]
+    labels, i = [], 0
+    offset, gap = mm(offset_mm), mm(LABEL_GAP_MM)
+    for run, closed, side in runs:
+        pts = [to_view(*xy(fi)) for fi in run]
+        r = get_len(run[0], P_RADIUS) if run else 0.0
+        for (x, y), (tx, ty) in zip(pts, G.pile_tangents(pts, closed)):
+            box = _bbox_xy(tags[i], view)
+            w, h = (box[2], box[3]) if box else (mm(1000), mm(400))
+            along, across = math.atan2(ty, tx), math.atan2(tx * side, -ty * side)
+            if rotation == "along":
+                ang, alt = along, across
+            elif rotation == "across":
+                ang, alt = across, along
+            else:
+                ang, alt = math.radians(float(rotation)), None
+            labels.append({"x": x, "y": y, "r": r, "tx": tx, "ty": ty, "side": side, "w": w, "h": h, "angle": ang, "alt": alt})
+            i += 1
+    res = G.place_labels(labels, circles, other_boxes, offset, gap)
+    # 4. turn each label (the angle is relative to the view), then move it so its centre lands on its place
+    for tag, lab in zip(tags, res):
+        tag.RotationAngle = _norm_angle(TAG_ANGLE_SIGN * lab[2])
+    doc.Regenerate()
+    for tag, lab in zip(tags, res):
+        box = _bbox_xy(tag, view)
+        if box is not None:
+            cx, cy = to_model(lab[0], lab[1])
+            h = tag.TagHeadPosition
+            tag.TagHeadPosition = XYZ(h.X + cx - box[0], h.Y + cy - box[1], h.Z)
+    doc.Regenerate()
+    return {"new": made, "moved": len(tags) - made, "removed": removed,
+            "flipped": sum(1 for x in res if x[6]), "nudged": sum(1 for x in res if x[3]),
+            "turned": sum(1 for x in res if x[5]),
+            "touching": [mark_of(flat[j]) for j, x in enumerate(res) if not x[4]], "failed": failed}
 
 
 # ------------------------------------------------------------------ wall settings saved in the model
