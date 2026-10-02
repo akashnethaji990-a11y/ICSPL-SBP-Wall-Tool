@@ -274,7 +274,8 @@ try:
     joined, jfail, jerr = SR.cut_soft_by_hard(doc, SR.hard_soft_pairs(placed, closed, info["ends"]))
     look["cut"] = "{} overlaps joined (HARD cuts SOFT)".format(joined) + (
         ", {} failed: {}".format(jfail, jerr) if jfail else "")
-    look["2D"] = SR.apply_view_filters(doc, doc.ActiveView, allow_template)
+    # SKIP: Filter application disabled to keep piles visible
+    look["2D"] = "skipped (piles kept visible)"
     look["3D"] = SR.set_material(doc, [fi for fi, k in placed])
     tg.Commit()
 except Exception as ex:
