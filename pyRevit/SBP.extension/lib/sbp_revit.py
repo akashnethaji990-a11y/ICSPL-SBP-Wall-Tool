@@ -794,8 +794,10 @@ def default_tag_name(doc, types):
 
 
 def _idv(eid):
-    """Get integer value from ElementId (IronPython compatibility)."""
-    return eid.Value
+    try:
+        return eid.Value
+    except AttributeError:
+        return eid.IntegerValue
 
 
 def _norm_angle(a):
