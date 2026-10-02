@@ -111,9 +111,9 @@ def ask_kind(end, mark):
 
 
 def allow_template(name):
-    return forms.alert("This view's template '{}' controls filters.\n\nAdd the SBP HARD/SOFT filters to the "
-                       "template? Every view that uses it will show them.".format(name),
-                       title="SBP Wall", yes=True, no=True)
+    """SKIPPED: Filter prompt disabled to keep piles visible in view.
+    Always return False (don't modify template filters)."""
+    return False
 
 
 def allow_template_lines(name):
