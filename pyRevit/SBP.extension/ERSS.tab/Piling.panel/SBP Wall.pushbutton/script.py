@@ -274,6 +274,15 @@ try:
     joined, jfail, jerr = SR.cut_soft_by_hard(doc, SR.hard_soft_pairs(placed, closed, info["ends"]))
     look["cut"] = "{} overlaps joined (HARD cuts SOFT)".format(joined) + (
         ", {} failed: {}".format(jfail, jerr) if jfail else "")
+
+    # Remove any existing HARD/SOFT filters from view so piles stay visible
+    from Autodesk.Revit.DB import FilteredElementCollector, ParameterFilterElement
+    all_filters = FilteredElementCollector(doc).OfClass(ParameterFilterElement)
+    for filt in all_filters:
+        if "HARD PILE" in filt.Name or "SOFT PILE" in filt.Name:
+            if doc.ActiveView.IsFilterApplied(filt.Id):
+                doc.ActiveView.RemoveFilter(filt.Id)
+
     look["2D"] = "disabled (piles visible without filters)"
     look["3D"] = SR.set_material(doc, [fi for fi, k in placed])
     tg.Commit()
