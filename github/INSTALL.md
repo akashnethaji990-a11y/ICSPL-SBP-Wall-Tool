@@ -45,7 +45,7 @@ including straight lines, arcs, circles and joined lines, and counts the piles.
 1. Open a **plan view**. The pile family **`ICSPL_Pile`** must be loaded in the project.
 2. Draw the "other structure" line with **Model Line**: any shape (line, arc, circle, spline or several joined lines).
 3. Select the line → **ERSS** tab → **SBP Wall**.
-4. Fill in the settings: wall name, pile type, level, c/c spacing, gap (min 150), Cut-off Level and Toe Levels.
+4. Fill in the settings: wall name, pile type, level, c/c spacing, gap (min 10), Cut-off Level and Toe Levels.
 5. **Click on the side** of the line where the wall should go.
 6. The piles are placed, and a report shows the **HARD / SOFT / TOTAL** counts. Marks look like `SBP1-H001` / `SBP1-S001`.
 7. To change a wall: run SBP Wall again with the **same wall name** and confirm the rebuild.

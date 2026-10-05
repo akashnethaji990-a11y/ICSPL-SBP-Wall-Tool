@@ -722,3 +722,474 @@ Number now also places Structural Foundation tags in the current plan view.
 
 **Revit test (after Reload):** Number on SBP1 + SBP2 with the defaults. Expect: every label horizontal and just
 clear of its pile; on the bottom run, labels alternating above and below. Run it again: still one label per pile.
+
+## 22. 28 Sep: Number failed in Revit: "ImportError: No module named Windows" (fixed)
+- **Cause:** line 30 of Number's script.py, `from System.Windows import ...`, ran before any WPF assembly was
+  referenced. pyRevit only adds those references when `pyrevit.forms` is imported, and that came later in the
+  script.
+- **Fix:** `import clr` plus `clr.AddReference` for PresentationFramework, PresentationCore, WindowsBase and
+  System.Xaml at the top of the script, before any System.Windows import. This uses the same `clr.AddReference`
+  style as `pyrevit/framework.py`.
+  - Number is the only button with its own WPF window. SBP Wall and SBP Edit use rpw FlexForm, and the others use
+    pyRevit forms; both add the references themselves.
+- **Test**, run in pyRevit's own IronPython 2.7.12 engine outside Revit with the new `tools/ipy_host.ps1` +
+  `tests/ipy_number_wpf.py`:
+  - **.NET Framework engine**, without the new lines: the import fails (the bug is reproduced).
+  - **.NET Framework engine**, with the fix: all 7 WPF names import. The real NumberWindow.xaml loads through
+    `wpf.LoadComponent` as pyRevit does, with 16/16 named controls, the default rotation Fixed 0, and 3 events
+    reaching the Python methods.
+  - The same host also loads pyRevit's own SelectFromList.xaml, and binds Click / TextChanged / Checked /
+    SelectionChanged.
+  - **Revit 2026 engine (netcore)**: the imports pass. The window itself can't be checked on this PC, because
+    PowerShell 7.6 runs .NET 10, where IronPython 2.7 cannot subclass a WPF Window. Revit 2026 runs .NET 8.
+  - To rerun: `powershell -STA -ExecutionPolicy Bypass -File tools\ipy_host.ps1 -Py tests\ipy_number_wpf.py`
+    (add `-Arg before` to see the old failure).
+- **Revit check:** pyRevit → Reload, then run Number → the dialog opens.
+
+## 23. 28 Sep: Tag type dropdown widened (Akash's ICSPL_Pile_Mark_Tag is a Generic Tag family)
+**Request:** the dropdown listed only Structural Foundation tags. Also list Generic Annotation and Generic Model tag
+families, so the custom Mark tag shows up. Keep the existing ones.
+
+**Revit rule (told to Akash):** a tag can only be put on elements of its own category.
+- Structural Foundation Tags and **Multi-Category Tags** can label a pile and read its Mark.
+- A **Generic Model Tag** (the default category of Revit's "Generic Tag" template) is refused on a Structural
+  Foundation.
+- A **Generic Annotation** is not a tag and cannot read the pile's Mark.
+
+**Built:**
+- `SR.label_types`: the dropdown lists, in this order, Structural Foundation tags ("Family : Type", unchanged, so
+  remembered names still match), then Multi-Category Tags, Generic Model Tags and Generic Annotations as
+  "Family : Type  (category)". The name format is `SD.label_name`, tested.
+- `SR.unusable_label_types`: before the dialog, each listed tag type is test-placed on the first pile in the
+  current view, inside a transaction that is rolled back (no change to the model, nothing in Undo).
+  - A type Revit refuses stays listed. Choosing it shows the reason and the family fix in the live box, and Next is
+    greyed out.
+  - The fix: open the family, Family Category and Parameters > Structural Foundation Tags (or Multi-Category
+    Tags), save, load it again.
+  - Generic Annotations are always marked "not a tag".
+- The default is the model's default Structural Foundation tag, else the first usable one, else "No labels". A
+  remembered type that is not usable is not preselected.
+- The chosen tag type is activated before placing (a newly loaded type can be inactive).
+- **Tests:** data 20 (new label_name), geometry 22, static checks clean. The pyRevit-engine XAML test still passes.
+  The category listing and the test-place check need Revit.
+
+**Revit check:**
+1. Number → the dropdown shows ICSPL_Pile_Mark_Tag with its category.
+2. If it says it cannot label piles, change the family category as above, reload the family, and run Number again.
+   It then shows as a normal entry (a Structural Foundation tag, or "(Multi-Category Tag)").
+- Open question: if Akash wants a Generic Annotation to work anyway, it would need a different method: place
+  annotation symbols and copy the mark text into them. That text does not update by itself.
+
+## 24. 28 Sep: Generic Annotation labels (Akash: "yeah go on"), built, not yet run in Revit
+- **How it works:** choosing a Generic Annotation in the Tag type dropdown places one annotation per pile in the
+  plan view, and copies the pile's Mark into a text parameter of the annotation.
+- **Choosing the parameter:** the test-placement before the dialog (rolled back) lists the annotation's own
+  writable text parameters. `SD.pick_text_param` takes "Mark", then a name with mark / number / no, then text /
+  label / tag, else the first one.
+  - The live box and the confirm box name the parameter.
+  - An annotation with no text parameter stays listed, with the reason (give its Label an instance text
+    parameter), and Next is off.
+- **Layout:** the same as tags (`_lay_out`, shared): the defaults are horizontal and 50 mm; one label per pile;
+  never overlapping; the other side or a nudge when needed.
+  - Annotations are turned with `ElementTransformUtils.RotateElement` about +Z (counter-clockwise, sure) and moved
+    with `MoveElement`.
+  - In a turned view the box size is recovered by `G.unturned_size` (tested).
+- **One label per pile:** annotations carry hidden data `SBPNumberNote` (GUID
+  54ef95e8-ab50-443c-bcea-1cd21ff25f2f: Wall, Pile UniqueId, Angle), so a re-run moves, turns, re-types and
+  re-numbers the same annotation.
+  - Switching between tag and annotation deletes the old kind on those piles, and the report says "N old labels
+    removed".
+- **The copied text does not follow later Mark changes:** Number updates it on a re-run, and the report says so.
+  - Tags vanish with their piles, annotations do not, so an **SBP Edit rebuild deletes that wall's Number
+    annotations in every view** (`SR.delete_number_notes`). The report row "Pile numbers" gives the count.
+- **Refactor:** `place_pile_tags` and `place_pile_notes` share `_view_frame`, `_lay_out` and `_stats`.
+- **Tests:** data 21 (new pick_text_param), geometry 23 (new unturned_size), static checks clean. The
+  pyRevit-engine Number test still passes. The placement code needs Revit.
+
+**Revit test:**
+1. Number, choose the Generic Annotation → the live box names the parameter.
+2. Yes → one annotation per pile, horizontal, 50 mm clear, none overlapping.
+3. Run again with the tag → the annotations are removed and the tags placed (and the other way round).
+4. SBP Edit spacing change → the report says that the annotation labels were removed.
+
+## 25. 28 Sep: other drafters' pile families (auto-detect + set up once), built, not yet run in Revit
+**Question (Akash):** "What if the other drafters have their own family?" Before this, the tool was tied to
+`ICSPL_Pile` and its Radius / Depth / Height Offset From Level. **Decision:** auto-detect, and ask once when not
+recognised (saved in the model).
+
+**Built:**
+- `SD.detect_pile_params` (pure, tested):
+  - size: Diameter / Pile Diameter / Pile Dia / Dia / D, then Radius / Pile Radius / R, then a name with "diam" or
+    the word "dia", then "radius";
+  - it skips bar / rebar / link / cage / casing / cover sizes;
+  - length (toe): a writable instance Depth / Length / Pile Length ...;
+  - cut-off: a writable instance Height Offset From Level / Offset from Host / Offset ...;
+  - instance parameters win over type parameters.
+  - Akash's family is recognised exactly as before (Radius × 2, Depth, Height Offset From Level). ICSPL_Pile also
+    keeps a built-in fallback set-up (`HOUSE_SPEC`).
+- `SR.pile_types`: ICSPL_Pile types by name, other families as "Type (Family)" (`type_label`).
+  - It lists every Structural Foundation family that is set up, recognised, or has "pile" in its name.
+  - Families without a placed pile are read from a probe in a rolled-back transaction.
+- `SR.ensure_pile_spec`: SBP Wall (after the form) and SBP Edit (when the type changes) ask only for the roles that
+  were not recognised, with the parameter values in mm; "is the diameter / is the radius" is one choice.
+  - The answer is saved in the model (JSON key `pile_families` in the wall-settings storage), so every drafter
+    gets it.
+- **Shift+Click on SBP Wall** (`config.py`): pile family set-up. It lists every Structural Foundation type, asks
+  all three roles again and saves them. It can set up a family that is not listed, or correct a wrong set-up.
+- `SR.apply_levels`:
+  - uses the family's own length / cut-off parameters;
+  - **reads Top / Bottom back and refuses** (nothing placed) if they are more than 2 mm off the asked cut-off /
+    toe, naming the parameters and pointing to Shift+Click. This protects against a family that moves its levels
+    another way.
+- Everything else follows the family:
+  - `all_piles` holds any pile family, plus any SBP-tagged pile;
+  - `is_sbp_pile` works for any family (old SBP1-H001 marks only count on ICSPL_Pile);
+  - `diameter_of` / `radius_of` read the set-up;
+  - the typed-data copy never copies a family's own size / length / cut-off parameters;
+  - the label layout uses each pile's radius.
+- SBP Edit matches a wall's type by its saved `type_uid`, so a "Type (Family)" name never looks like a type change.
+- **Tests:**
+  - data 23 (2 new: ICSPL_Pile recognised as before; other names, bar sizes ignored, unusual names asked);
+  - geometry 23; 15 files static-clean;
+  - **new `tests/ipy_import_smoke.py`:** `sbp_revit` imports in pyRevit's IronPython 2.7 against the Revit 2024
+    API DLL, so every Revit class / enum / category it uses exists. RevitAPIUI is stubbed (it needs Revit).
+
+**Revit test:**
+1. SBP Wall → the pile type list still shows "1000mm Bored Pile" and "1200mm Bored Pile". A wall made with them
+   works as before.
+2. Load another pile family, e.g. a colleague's → it shows as "Type (Family)". Choose it → questions only if its
+   names are unusual → the wall is placed, and the report shows its diameter.
+3. Run it again with the same family → no questions.
+4. Shift+Click SBP Wall → the set-up dialog; redo a family.
+
+## 26. 28 Sep: minimum gap 150 → 10 mm
+- Akash (from the SBP Wall form): "remove the minimum 150 mm, make it 10 mm".
+- `SD.MIN_GAP_MM = 10.0`: SBP Wall and SBP Edit refuse a gap below 10 mm. The **default stays 150**.
+- Form labels now say "(mm, min 10)" in SBP Wall, its fallback prompt and SBP Edit. `preview/ui_preview.py`,
+  README and INSTALL.md were updated to match.
+- Test: gap 10 and 100 are accepted, 9 is refused. Data 23 + geometry 23 pass.
+- Note: the on-hold v2 rule R5 ("gap to the line ≥ 150") now means ≥ the minimum gap.
+
+## 27. 28 Sep: HARD-to-HARD spacing field
+- **Request:** Akash wants a HARD-to-HARD spacing field in the SBP Wall form. In his screenshot he had typed 2000 in
+  "hard-to-soft" with a Ø1500 pile (family Bored Pile2, recognised by §25). Most likely that was meant as
+  HARD-HARD; as hard-to-soft it is refused (no overlap).
+- **Built:**
+  - The SBP Wall form, its fallback prompts and the SBP Edit form now show "c/c spacing HARD to SOFT" and
+    "c/c spacing HARD to HARD (= 2 x HARD to SOFT; change either one)". The HARD-HARD box is filled with
+    2 x the remembered or saved HARD-SOFT.
+  - `SD.resolve_spacing` (tested): only HARD-HARD changed → HARD-SOFT = HARD-HARD / 2; only HARD-SOFT changed → as
+    typed; both changed and not 2:1 → a message ("change only one of them"); a blank box is ignored.
+- Still one saved value (`spacing` = HARD-SOFT), so existing walls and SBP Edit rebuild detection are unchanged.
+  The SBP Wall report adds a row "Design c/c hard-hard". The "must be less than the pile diameter" message now gives
+  both spacings.
+- `preview/ui_preview.py` got the same field. Its gap check now finds the Gap box by its label, not by position.
+- **Tests:** data 24 (new resolve_spacing), geometry 23, 17 files static-clean.
+
+## 28. 28 Sep: three linked spacing values (Akash's drawing), built, not yet run in Revit
+**Request (drawing, Ø1500):**
+- HARD to HARD 2000.
+- "Cutting soft pile" 500: the overlap, where each HARD cuts the SOFT.
+- "Leftover soft pile" 500: the uncut SOFT between the two HARD edges.
+- "I need 3 of them; if I input any one the rest should arrange accordingly".
+- This is only for straight and curved runs. At corners, keep what was fixed before.
+
+**Built** (replaces the §27 two-box version; `SD.resolve_spacing` removed):
+- Four boxes in the SBP Wall form, its fallback prompts, the SBP Edit form and `preview/ui_preview.py`:
+
+  | Box | Value |
+  |---|---|
+  | HARD to SOFT | s |
+  | HARD to HARD | 2 s |
+  | Cut into each SOFT pile (overlap) | D − s |
+  | Leftover SOFT between HARD piles | 2 s − D |
+
+  The drafter changes any one.
+- `SD.spacing_values`, `changed_spacing`, `spacing_from`, `check_spacing` (tested with Akash's numbers):
+  - several changed boxes must agree;
+  - the cut must be > 0;
+  - the leftover must be ≥ 0, a new check: HARD piles never cut each other (decided rule R5).
+- **SBP Wall:**
+  - the form shows the values for the default pile type's diameter, read by `SR.type_diameter` (rolled-back
+    probe);
+  - after the form, the chosen type's diameter turns the changed box into s;
+  - the report adds the design cut, the design leftover and the actual leftover on a straight run.
+- **SBP Edit:** the form shows the first wall's values. A changed cut / leftover is applied to each wall with its own
+  diameter, and then rebuild detection runs as before. The old "read pile size" transaction inside the line check
+  was replaced by one diameter read per wall, before the checks.
+- Only s is saved per wall, as before.
+- **Tests:** data 25 (2 new), geometry 23, 17 files static-clean, and the import check against the Revit API passes.
+- **Corners, still open:** today's layout is v1 (equal spacing over the whole wall, rounded so the c/c is never larger
+  than the design). So straight runs also get slightly less than the design value (e.g. 900 → 873.2 on the test
+  wall). Keeping the exact design value on straights and adjusting only at corners is the on-hold v2 rule set (R2–R7
+  + the A/B question). Akash was asked whether to build it now.
+
+## 29. 29–30 Sep: v2 built (HARD/SOFT types, three linked values, exact spacing, option B), not yet run in Revit
+**Akash's decisions (29 Sep, then restated 30 Sep):**
+- Build v2 now. Drive the layout from the design **HARD to HARD** c/c (e.g. 2000).
+- Read the real HARD and SOFT diameters from each pile's family type, never assume. They can differ on one wall
+  and between walls.
+- Cutting depth (each side) = (Dh + Ds − HH) / 2; leftover SOFT web = HH − Dh. Ø1500 at 2000: cutting 500, web 500.
+- The three values are linked: type any one, the other two follow. A cutting depth or web typed per wall wins;
+  web < 200 = warning.
+- Straights and curves keep the exact design spacing. Corners: as fixed before (R2–R7), option **B**.
+- Show the values read and worked out per wall before anything is written.
+- Also: "Show the 1500/2000 example first, must give cutting 500", then "run it now".
+
+**Built:**
+- `sbp_data`:
+  - `spacing_values(hh, dh, ds)`, `hh_from`, `spacing_driver` (a typed cut / web wins over a typed HH, with a note;
+    a cut and a web that disagree = error), `check_spacing` → (errors, warnings), `corner_web`.
+  - `upgrade` (version-1 walls), `default_marks`, `plan_rows` (the values table).
+  - `VERSION` 2, `MIN_WEB_MM` 200. `NUM_KEYS` / `REBUILD_KEYS` now use `spacing_hh` and `soft_type`.
+- `sbp_geom` (pure, IronPython-safe):
+  - `offset_path(..., sharp_deg)`: sharp outside corners (miter).
+  - `chain_joints`, `find_corners` (bend > 5°, ≤ 150°), `turn_deg`, `seg_dist`, `line_dist`.
+  - `layout_wall`: chord walk at s = HH/2. The leftover goes into a few equal reduced gaps (≥ web min(200, design)):
+    at the far end without corners, next to the corners otherwise.
+  - Corner HARD at max(s, (Dh + web)/(2 cos(b/2))). Option B moves the corner SOFT along the bisector until it is
+    s from both HARD piles, limited by the gap to the line.
+  - Short legs: shrink c → equal reduction (low web) → one shared HARD → drop the smaller-bend corner.
+  - A circle is divided equally.
+  - `check_wall`: every pile.
+- `sbp_revit`:
+  - `plan_wall(…, dh, ds, …)` (v2) and `plan_wall_v1` (old walls, only to detect a moved line).
+  - `place_piles(doc, {HARD: type, SOFT: type}, …)` and `apply_levels` calibrated per pile type.
+  - `wall_data` saves the SOFT type, `spacing_hh`, `spacing_by`, `spacing_val` and `layout` 2.
+  - `plan_rows` wraps `SD.plan_rows`; `load_walls` applies `SD.upgrade`.
+- **SBP Wall:**
+  - Form: HARD type, SOFT type ("(same as HARD)" default), three boxes.
+  - Order: diameters from both types, then the side click, then plan + check. The values table goes to the report
+    and a Yes / No box ("check before placing") comes up. Only then the transaction.
+  - `settings.json` is merged, no longer overwritten (Number's label settings were lost before). Old `spacing` is
+    read as HH = 2 x spacing.
+- **SBP Edit:**
+  - Same form changes. Each wall keeps its own saved spacing value (so a new SOFT type keeps a saved cutting depth
+    and moves HH).
+  - Old walls are compared with their own v1 layout, so a cut-off change does not rebuild them. Any rebuild uses v2.
+  - Every wall to change is shown (rebuild table / level changes), then one Yes / No.
+- `preview/ui_preview.py`, README, bundle tooltip updated.
+
+**Checked offline:**
+- geometry 36 tests (14 new v2), data 30 (7 new), 16 files static-clean.
+- `tests/ipy_layout_v2.py` gives the same numbers in pyRevit's IronPython 2.7 engine.
+- The import check against the Revit API passes.
+- Numbers (Ø1500/1500, HH 2000, gap 150):
+
+  | Case | Result |
+  |---|---|
+  | Straight 13.7 m | 15 piles, 12 × 1000 + 2 × 850 at the far end, web ≥ 200, cut 500 |
+  | 90° corner | HARD 1202 from the corner, SOFT moved 323, S-H 1000, web 200, SOFT edge 200 from the line (line inside) |
+  | Gap 10 | the move stops at 315 (edge 10 from the line): warning, cutting < 500 |
+  | Rectangle 14.304 × 8.404 | 22 H + 22 S, 2 reduced gaps, 0 warnings |
+  | HARD 1500 / SOFT 1200 | cut 350, web 500 |
+  | 30° bend | nothing moves, web 432 |
+
+**Found while building (shown to Akash as panel 8):** the leftover of a run can be up to one whole HH (2000), and
+each gap can only give 150 before the web drops below 200. A leg shorter than about 14 gaps often cannot take it.
+Then every gap of that leg is reduced equally (e.g. 6 m legs at a 90° corner: 6 × 800, web 99, cutting ≥ 500, one
+warning per SOFT). The alternative (gaps above 1000 = less overlap) was not chosen because "reduce only if required
+for overlap". Asked Akash to confirm.
+
+**Drawing:** https://claude.ai/artifact/A3u7FsT18wYot4hxnUX4Wc (panels 1–8 to scale; 7, 8 and the values table come
+from the tool's own code; the script asserts that panels 3 and 5 match the code).
+
+**Incident:** a scratch patch script opened `tests/test_sbp_data.py` for writing with a bad `newline` argument, which
+emptied the file. It was rebuilt from HEAD plus the previous session's edits (replayed from the transcript). All 25
+tests came back at their original line numbers, and it was then updated for v2.
+
+## 29a. 30 Sep: SBP Wall dialog is now a live WPF window (two bugs Akash reported)
+- **Bug 1 (no live recalc):** the rpw FlexForm could not recompute. Replaced the SBP Wall form with a WPF window
+  `SBPWallWindow.xaml` + `SBPWallWindow` (same pattern as Number). HARD to HARD is the master and always sets
+  cutting depth and leftover web live (1500/1500 at 2000 -> 500 / 500, not 600 / 300); typing a cutting depth or
+  web drives HARD to HARD instead; changing HARD to HARD again restores the computed defaults; changing a pile type
+  recomputes from the new diameters. `SD.linked_boxes(driver, value, dh, ds)` holds the pure logic (tested).
+- **Bug 2 (clearing a box crashed in fmt_num):** `SD.fmt_num(None)` now returns "" instead of `float(None)`. In the
+  window a blank box just blanks the derived boxes; on OK an empty required field is reported, not crashed.
+- Diameters for the live form are read once up front (`type_diameter` per offered type, rolled back); a family not
+  set up yet reads None and the window says the size is read after Next. The authoritative diameters are still read
+  after the type is chosen. `spacing_by` / `spacing_val` (the box the drafter set) flow straight through; the main
+  script resolves HARD to HARD with `SD.hh_from`. The simple-prompt fallback path is kept for when WPF is absent.
+- **The corner SOFT clarification (Akash):** confirmed the code already slides the corner SOFT inward along the
+  bisector only, never resizes it (diameter comes from the type; only the centre moves), and keeps the same typed
+  clearance (edge >= gap) as every other pile; it stops at the gap and warns rather than crossing the line. Locked
+  in by `test_v2_corner_soft_keeps_the_typed_gap_and_never_crosses_the_line` (gaps 150 / 100 / 50 and a tight case).
+- **Checked offline:** data 31, geometry 37; `tests/ipy_sbp_wall_wpf.py` loads the XAML in pyRevit's IronPython 2.7
+  engine and confirms the live recalc (HH2000 -> 500/500, cut350 -> HH2300/web800, cleared -> blank, no crash).
+
+**Test in Revit (after pyRevit → Reload):**
+1. SBP Wall form (now a live window): type HH 2000 with Ø1500 -> cutting and web update to 500 / 500 as you type.
+   Clear the HH box -> cutting and web go blank, no crash. Type a cutting depth -> HH and web follow.
+2. Type cutting 450 → HH 2100 ("typed now", wins). Type web 150 → placed with a WARNING.
+3. The table and the Yes / No box come before anything is placed; No places nothing.
+4. Rectangle line 12 504 × 6 604, wall outside → 22 + 22. Dimension a straight c/c (1000), a corner SOFT to HARD
+   (1000) and the corner web (200).
+5. HARD 1500 + SOFT 1200 types → cutting 350; Cut-off / Toe correct on both types (levels per type).
+6. SBP Edit on an old (v1) wall: cut-off only → piles kept. A spacing change → rebuilt with v2.
+7. Number still works on a v2 wall; its label settings survive an SBP Wall run.
+
+## 29b. 30 Sep: live preview tab in SBP Wall dialog (Akash asked)
+
+**Request:** whenever any value changes, show a live preview of the pile setout and an animated
+version showing how piles sequence. Separate tab, refreshes automatically while working, nothing
+written to the model until confirmed.
+
+**Built:**
+- `SBPWallWindow.xaml` updated to a `TabControl`: Settings tab (the existing form, unchanged) +
+  Preview tab (756×220 `Canvas`, info text, Play/Pause button and counter).
+- Window widened from 560px to 800px; OK/Cancel buttons moved to the footer outside the tabs so
+  they are always visible.
+- `_update_preview()` called at the end of every `_apply()` (every spacing or type change):
+  runs `G.layout_wall` on a straight placeholder line of 8 × HH (about 9-10 piles visible) and
+  redraws the canvas.
+- `_draw_preview(centres, kinds, dh, ds, hh, anim_step=None)`:
+  - centre line (light gray horizontal), pile circles, dimension annotation (HH span above the first
+    pair of HARD piles).
+  - HARD: solid dark circle (#1e1e1e fill) + white "H" label.
+  - SOFT: diagonal hatch brush (DrawingBrush, 6px tile, `TileMode.Tile`, transparent background so
+    the canvas white shows through) + black "S" label.
+  - `anim_step=N`: first N+1 piles shown, Nth highlighted orange; remaining piles shown as ghosts.
+- Play/Pause button → `DispatcherTimer` at 300ms / pile, loops from the first pile to the last.
+  Stopping restores the static full view.
+- `_make_soft_brush()` module-level helper with try/except fallback (light gray if DrawingBrush
+  unavailable in the pyRevit environment).
+- All preview code is guarded by `_PREVIEW_OK` so the window still loads in older pyRevit versions.
+- `cancel_click` / `ok_click` stop the timer; a validation error on OK switches back to the Settings
+  tab to show `live_tb`.
+- Test file `tests/ipy_sbp_wall_wpf.py` updated: 5 new control names added to the NAMES list.
+
+**Offline verified:** data 31 pass, geometry 37 pass; static checks 0 problems.
+**NOT yet run in Revit.** Add steps 8-9 to the §29a test list when testing:
+8. Preview tab: type HH 2000 (Ø1500) → Preview tab shows ~9 piles HARD-solid / SOFT-hatched,
+   dimension "2000" above first H-H pair. Switch HH to 2500 → preview updates automatically.
+9. Play → piles light up one by one (orange highlight), counter shows "Pile X of N", loops.
+   Pause → static view restores. OK on the Preview tab → it switches to Settings for validation.
+
+## 30. 1–2 Oct: dialog levels, spacing compliance, other pile families (Akash's Revit runs)
+- SBP Wall dialog: Cut-off always opens at **0**, Toe HARD at **-20000** (not read from settings.json; cut-off is no
+  longer saved there). Live line "Pile depth = cut-off - toe - 150"; Next is disabled when it is <= 0.
+- Report: "Spacing Compliance" table (actual c/c vs diameter + 600) in SBP Wall and SBP Edit (`SR.spacing_compliance_table`).
+- `diameter_of` refuses a size outside 50–5000 mm (a wrong set-up gave 14000) and points to Shift+Click.
+- **Family `ICSPL_Bored Pile` (seen in Revit):** size = type parameter `Diameter` (1500, "it is the diameter"); cut-off =
+  `Height Offset From Level`; toe = **`Length`** (14000 on a new pile). `Depth` exists but does NOT move the bottom
+  (with Depth: asked toe -20000, Revit showed -14000 = top - Length).
+- Earlier "'Length' is missing or read-only": likely two parameters named Length on the pile (Revit's read-only one +
+  the family's). Fix: `SR._param` takes the writable one (`GetParameters`), used by `set_param` / `get_len` and the
+  pre-check in `_levels_of_type`. New read-back message when only the toe is wrong: "the toe parameter does not move
+  the pile bottom, pick the one equal to the pile length".
+- **Next (Akash):** Reload → Shift+Click SBP Wall → `1500mm Pile (ICSPL_Bored Pile)` → Diameter 1500 (diameter) →
+  Height Offset From Level → **Length = 14000 mm** → SBP Wall: report must show Top 0 / Bottom -20000.
+
+## 31. 2 Oct: new piles vanish in the ES3 base slab plan; SBP Diag button; IntegerValue crash
+- Akash (screen recording): SBP Wall placed 13 piles (7H/6S, `1200mm Bored Pile`, level BASE SLAB LEVEL, cut-off 0,
+  toe -14000) in view "ESCAPE SHAFT 3 (ES3) BASE SLAB LEVEL LAYOUT Copy 1 Copy 1". They show blue (SBP Wall selects
+  them at the end), then vanish on deselect; old piles show. The SBP view filters are not the cause (fill only).
+- New button **SBP Diag** (read-only, last in the Piling panel): NEW vs OLD pile table (level, offset, depth/toe
+  parameter, Elevation at Top/Bottom, real top/bottom vs the view range, phase + phase-filter status, workset +
+  visibility, design option, comments, mark, hidden, category hidden, crop, element overrides, each view filter,
+  "Revit counts it visible"), the view's range / phase / template / filters / crop, then the reason in plain words.
+  With nothing selected the newest SBP pile is NEW and the drafter clicks an OLD pile.
+- Suspect: cut-off 0 (the dialog default since 1 Oct) puts the piles above the cut plane of a deep shaft's plan.
+  **Fix for SBP Wall waits for the Diag result** (Akash wants the cause and plan first).
+- `spacing_compliance_table` crashed in Revit 2026 (`ElementId.IntegerValue` removed): now `_idv` (Value, fallback
+  IntegerValue). It was the only use.
+- First Diag run crashed: `AttributeError: Name` on `e.Symbol.Name` (IronPython `.Name` on a type). Fixed: `safe_name`
+  (Element.Name.GetValue, then .Name, then SYMBOL_NAME_PARAM / ALL_MODEL_TYPE_NAME, then str) for every name; each
+  table row and each "why" check now catches its own error and prints it instead of stopping the report.
+- HARD pile 2D fill colour: Akash's swatch = RGB 201,201,201 (was black). `SR.FILL_RGB` (sbp_revit.py line 51);
+  `_overrides(pattern, rgb)`. Applied whenever SBP Wall / SBP Edit set the view filters in the active view.
+
+## 32. 5 Oct: SBP9 piles drawn 1200 for type "1300mm Bored Pile"; far end tighter than 1800
+- Akash's picture: Ø1200 dimension = 158 px; HARD to HARD at the far end ~1416 (typed 1800, settings.json).
+- **Size:** `1300mm Bored Pile` (house family) was not in the 2 Oct type list, so it was made after, most likely by
+  duplicating `1200mm Bored Pile` without changing its size value. The tool reads the value (Radius x 2); with
+  1300 read, its minimum HH (D + 200) would be 1500, but the model shows ~1416, so it read 1200.
+  **Akash's rule: a type's name and its size value must be the same.** New `SD.name_size_mm` /
+  `SD.size_name_mismatch` (first "<n> mm" in the type name, 1 mm tolerance; names without it are not checked).
+  SBP Wall: red message in the dialog (Next disabled) and a stop after Next; SBP Edit: that wall is not changed
+  (error note). Fix in Revit: Edit Type > size 1300, then SBP Edit on SBP9 rebuilds it.
+- **Spacing:** offline v2 layout (Ø1200, HH 1800, straight 12.9 m): 1800 x4 then 1424 x4 at the far end = rule R3.
+  **Akash: keep R3 as now** (other choices shown: spread bigger, spread smaller, both ends).
+- **Bug fixed:** Spacing Compliance compared each pile with its neighbour (the other type, ~HH/2) against D + 600,
+  so every pile was "Below". Now HARD to the next HARD and SOFT to the next SOFT (`SR._same_kind_neighbours`,
+  wraps on a loop). Note: Ø1500 at HH 2000 shows "Below" everywhere (2000 < 2100); R3's tight far end shows "Below".
+- Offline: data 32, geometry 37; IronPython compile of SBP Wall / Edit / Diag, import smoke, WPF test OK.
+
+## 33. 6 Oct: v3 closing zone, size read from type "Diameter", HH = D + 600
+**Size (Task 1).** Akash made `Diameter` a TYPE parameter of ICSPL_Pile (shared, IFC group; Radius = Diameter/2).
+It was an instance parameter with default 1200, so every new pile, including the tool's test pile, got 1200 whatever
+the type. My 5 Oct "the type's value is 1200" was wrong. With his change every code path reads 1300. If the dialog still
+shows 1200, the cause is a saved Shift+Click set-up for ICSPL_Pile, or the old family still being in the model.
+Sizes are never cached, and settings.json has none.
+- New reading order, `SR.size_of` / `SR.type_size`:
+  1. type `Diameter` (Length, or Number = mm);
+  2. a test pile + Regenerate, `Radius` x 2;
+  3. the family set-up.
+- The source shows in the form ("HARD 1300 / SOFT 1300 (type parameter 'Diameter')"), in the check report, in SBP
+  Edit and in SBP Diag (3 new rows).
+- The old `fi.Symbol.Name` in an error message (IronPython AttributeError) is gone.
+
+**Closing zone (Task 2, Akash's drawing).**
+- Every gap is exactly s = HH/2 (chord), through corners too. The leftover goes only into the last N bays (field
+  "Closing SOFT piles (adjust)", default 3, max 6, saved per wall `close_n`), spread equally.
+- Akash's choices: rule **B** (the first N that passes every check, closest to the design), and a loop starts **HARD**.
+- Loop seam: the first prototype put the zone right against the start corner. Its last SOFT came 1152 from the first
+  SOFT across the 90° corner (48 mm overlap, ERROR; my first example missed it because it printed only warnings).
+  Now the last bay into the start HARD stays exact and the zone is just before it, as in Akash's drawing (red end
+  pile between the zone and the start).
+- **ES3** (measured from the drawing: centre line 11,223 x 14,618 = 51,682; Ø1200, HH 1800). The leftover after exact
+  900 steps is ≈ 360 (each step across a corner uses more line):
+  - 3 bays: shrink gives web 120, stretch gives cut 240; both fail;
+  - **4 bays shrink: HH 1440, web 240, cut 480, 58 piles (29 H + 29 S), no warnings**;
+  - corner webs 528 / 546 / 570.
+- Replaced v2 rules (kept only to check v2 walls): SOFT on every corner, R3, R4, option B, short legs, equal circles.
+- Layout versions 1 / 2 / 3. SBP Edit checks each wall with its own version; any rebuild uses 3, and the report says
+  "rebuilt with the closing-zone layout".
+
+**D + 600 (Task 3).** The form fills HH = HARD diameter + 600 when it opens and when the HARD type changes; still
+editable (`SD.default_hh`). The fallback prompts start from it too.
+
+**Offline:** geometry 44 (7 new v3 tests), data 34 (2 new); IronPython: v3 numbers equal CPython (58 piles / 1439.68,
+17 piles / 1425.00), the WPF form loads 20 controls, all buttons compile, import smoke OK.
+
+**Revit test list (Akash):**
+1. Reload. SBP Wall on the ES3 loop with `1300mm Bored Pile`: the form says "HARD 1300 / SOFT 1300 (type parameter
+   'Diameter')" and HH 1900.
+2. Change the HARD type to 1200 -> HH 1800. Type 1850 -> it stays 1850.
+3. Start drawing the loop at the top-left corner (or select a loop whose first line starts there) -> the check box shows
+   "Closing zone: N bays ..." and each adjusted bay with marks.
+4. Dimension: normal bays exactly 1800 (or 1900); adjusted bays as the report says; the start corner is HARD.
+5. SBP Diag on a pile -> "Size read by SBP Wall / Edit".
+6. SBP Edit on an old v2 wall, change "Closing SOFT piles" to 4 -> rebuilt with the closing-zone layout.
+
+## 34. 7 Oct: v3 for every shape; only the end / seam, only when needed; bay table with corner angles
+Akash's add-on, checked with numbers before coding (circle and rectangle), then his choices:
+- **Every shape** uses the same walk: from the start pile, each next pile is exactly s = HH/2 away in a straight line
+  (chord), through corners and on curves. This was already v3's walk; piles are never moved at corners.
+- **Open wall, free end:**
+  - case 1: the last design pile that fits is HARD -> stop there, no adjustment, the leftover line stays ('short');
+  - case 2: it would be SOFT -> end HARD on the line end, the last SOFT bay shortened (or 3-6 bays).
+  A joined end stays on the line end.
+- **Loop:** start HARD; **the last bay into the start stays exact** (Akash chose it over "adjust right at the seam",
+  which made ES3 stretch 6 bays with 12 warnings because the shrunk SOFT overlapped across the start corner).
+- **Only when needed:** a last bay within 10 mm of the design H-H is only spread over that bay. Otherwise 1 bay
+  first, then the field N (3) up to 6, by rule B.
+- **No clean choice on a loop:** WARN, plus the tip "start the loop at the middle of a side".
+- **Corners:** checked, never adjusted. `G.bay_corners` gives each bay's corner angle; warnings carry "(corner 90 deg)".
+- **Report:** an "Every bay" table in SBP Wall's check and SBP Edit's rebuild: H-S chords, H-H chord, web, cut,
+  adjusted, corner, check (`SD.bay_table`).
+- **Numbers** (D 1200, H-S 900, web 200; same in IronPython):
+
+  | Shape | Piles | Adjusted | Notes |
+  |---|---|---|---|
+  | circle R5000 (centre line) | 36 | 3 bays at H-S 729.2 (H-H chord 1454.5) | 15 bays exact (H-H chord 1792.7, web 593) |
+  | rectangle 10 x 6 from a corner | 34 | no clean choice -> 6 bays H-S 952 (cut 248, WARN) | corners: H06-S06-H07 web 142 WARN, H09-S09-H10 web 446 |
+  | rectangle 10 x 6 from mid-side | 36 | 5 bays H-S 734 | clean |
+  | 90 deg arc R8000, open | 15 | 1 bay H-S 880 (end HARD on the line end) | |
+  | L 8 + 6 m, open | 17 | 3 bays H-S 781 | corner bay web 337 |
+  | ES3 loop | 58 | 4 bays H-H 1440 | unchanged |
+- Offline: geometry 49 (12 v3 / shape tests), data 34; IronPython: same numbers, all buttons compile, WPF form 20
+  controls.
+- **Revit test (Akash):** the §33 list, plus:
+  - an open wall whose end is free -> check the end (stops at the last design HARD, or the end HARD on the line end);
+  - a circle and a 10 x 6 rectangle -> the "Every bay" table and the corner warnings with angles.

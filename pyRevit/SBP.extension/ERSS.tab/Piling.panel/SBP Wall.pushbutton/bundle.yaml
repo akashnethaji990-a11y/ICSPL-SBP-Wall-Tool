@@ -3,5 +3,7 @@ tooltip: >-
   Click with nothing selected: Revit's Draw tools open (Line, Rectangle, Circle, Arc, Spline,
   Pick Lines). Draw your line and press Modify / Esc; the SBP Wall form then opens by itself.
   Or select existing line(s) or reference planes first, then click.
+  HARD and SOFT types may differ; type HARD to HARD, cutting depth or web. The values are shown before placing.
   Never deletes: a new wall always gets a new name. SOFT piles are cut by HARD piles.
+  Any pile family works: a new family is set up once. Shift+Click: pile family set-up (set up or correct a family).
 author: Akash

@@ -23,6 +23,13 @@ import json
 import math
 import os
 
+import clr
+# WPF assemblies for NumberWindow: the System.Windows imports below need them (as in pyrevit.framework)
+clr.AddReference("PresentationFramework")
+clr.AddReference("PresentationCore")
+clr.AddReference("WindowsBase")
+clr.AddReference("System.Xaml")
+
 from Autodesk.Revit.DB import Transaction, TransactionGroup, ElementId, BuiltInParameter, ViewPlan
 from Autodesk.Revit.UI.Selection import ObjectType
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -118,8 +125,10 @@ class NumberWindow(forms.WPFWindow):
     """Prefixes + Continue / Start new + label options, with a live line.
     result = (soft, hard, continue, labels) or None; labels = None or dict(tag, offset, rotation, sides)."""
 
-    def __init__(self, walls, others_by_level, tag_names, cfg, label_block):
+    def __init__(self, walls, others_by_level, tag_names, cfg, label_block, unusable, note_params):
         self._ready = False
+        self.unusable = unusable            # {tag type shown name: why it cannot label a pile}
+        self.note_params = note_params      # {Generic Annotation shown name: text parameter for the number}
         self.walls = walls
         self.others = others_by_level
         self.levels = []
@@ -137,7 +146,7 @@ class NumberWindow(forms.WPFWindow):
         for n in tag_names:
             self.tag_cb.Items.Add(n)
         want = cfg.get("number_tag")
-        self.tag_cb.SelectedIndex = (tag_names.index(want) + 1 if want in tag_names else (1 if tag_names else 0))
+        self.tag_cb.SelectedIndex = tag_names.index(want) + 1 if want in tag_names else 0
         try:
             self.offset_tb.Text = SD.fmt_num(cfg.get(CFG_OFFSET, DEFAULT_OFFSET_MM))
         except (TypeError, ValueError):
@@ -190,6 +199,8 @@ class NumberWindow(forms.WPFWindow):
         if not tag or tag == NO_LABELS:
             return None, []
         errs = []
+        if tag in self.unusable:
+            errs.append("Tag type '{}' cannot label the piles: {}".format(tag, self.unusable[tag]))
         try:
             offset = float(self.offset_tb.Text.strip())
             if offset < 0:
@@ -208,7 +219,8 @@ class NumberWindow(forms.WPFWindow):
         else:
             rot = "along"
         sides = dict((n, SIDES[cb.SelectedIndex]) for n, cb in self.side_cbs.items())
-        return {"tag": tag, "offset": offset, "rotation": rot, "sides": sides}, errs
+        return {"tag": tag, "offset": offset, "rotation": rot, "sides": sides,
+                "param": self.note_params.get(tag)}, errs
 
     def last_numbers(self, soft, hard, cont):
         """{level: (last SOFT, last HARD)} to carry on from (0, 0 = start at 1)."""
@@ -249,6 +261,9 @@ class NumberWindow(forms.WPFWindow):
         lines.append("")
         lines.append("Labels: {} mm from the pile edge, {}.".format(SD.fmt_num(lab["offset"]), rotation_text(lab["rotation"]))
                      if lab else "Labels: none, only the marks are written.")
+        if lab and lab["param"]:
+            lines.append("Generic Annotation: the number is copied into its '{}'. It does not follow later Mark "
+                         "changes; running Number again updates it.".format(lab["param"]))
         self.live_tb.Text = "\n".join(lines)
 
     def ok_click(self, sender, args):
@@ -313,19 +328,24 @@ for fi in all_piles:
         other_marks.add(m)
 
 view = doc.ActiveView
-tag_types = SR.foundation_tag_types(doc)
-tag_names = sorted(tag_types.keys())
-cfg = load_cfg()
-if "number_tag" not in cfg or cfg.get("number_tag") not in tag_types:
-    cfg["number_tag"] = SR.default_tag_name(doc, tag_types)
+# Tag type dropdown: Structural Foundation tags, then Multi-Category tags, Generic Model tags, Generic Annotations
+entries = SR.label_types(doc)
+tag_types = dict((n, s) for n, s, k in entries)
+tag_names = [n for n, s, k in entries]
+unusable, note_params = {}, {}
 label_block = None
 if not isinstance(view, ViewPlan) or view.IsTemplate:
     label_block = "Labels need a plan view: open one and run Number again to place them. Only the marks are written now."
 elif not tag_names:
-    label_block = ("No Structural Foundation Tag family is loaded. Load one that shows Mark to place labels. "
+    label_block = ("No tag or Generic Annotation family is loaded. Load one that shows Mark to place labels. "
                    "Only the marks are written now.")
+else:
+    unusable, note_params = SR.unusable_label_types(doc, view, walls[0]["piles"][0][0], entries)   # rolled back
+cfg = load_cfg()
+if cfg.get("number_tag") not in tag_types or cfg.get("number_tag") in unusable:
+    cfg["number_tag"] = SR.default_tag_name(doc, entries, unusable)
 
-win = NumberWindow(walls, others_by_level, tag_names, cfg, label_block)
+win = NumberWindow(walls, others_by_level, tag_names, cfg, label_block, unusable, note_params)
 win.show_dialog()
 if not win.result:
     script.exit()
@@ -339,9 +359,11 @@ lines = ["{} ({}): {} piles, {}, {}".format(name, lv, len(marks), SD.range_text(
                                             SD.range_text(hard, rng[SR.HARD])) for name, lv, marks, rng in plan]
 msg = "Write these pile numbers into Mark?\n\n" + "\n".join(lines)
 if labels:
-    msg += "\n\nLabels in view '{}': tag '{}', {} mm from the pile edge, {}; {}.".format(
-        view.Name, labels["tag"], SD.fmt_num(labels["offset"]), rotation_text(labels["rotation"]),
-        ", ".join("{} {}".format(w["name"], labels["sides"][w["name"]]) for w in walls))
+    msg += "\n\nLabels in view '{}': {} '{}', {} mm from the pile edge, {}; {}.".format(
+        view.Name, "Generic Annotation" if labels["param"] else "tag", labels["tag"], SD.fmt_num(labels["offset"]),
+        rotation_text(labels["rotation"]), ", ".join("{} {}".format(w["name"], labels["sides"][w["name"]]) for w in walls))
+    if labels["param"]:
+        msg += "\nThe number is copied into its parameter '{}'.".format(labels["param"])
 else:
     msg += "\n\nLabels: none (only the marks)."
 if dups:
@@ -385,7 +407,11 @@ if labels:
     t2 = Transaction(doc, "Number SBP piles - labels")
     t2.Start()
     try:
-        placed = SR.place_pile_tags(doc, view, tag_types[labels["tag"]], runs, labels["offset"], labels["rotation"])
+        if labels["param"]:
+            placed = SR.place_pile_notes(doc, view, tag_types[labels["tag"]], labels["param"], runs,
+                                         labels["offset"], labels["rotation"])
+        else:
+            placed = SR.place_pile_tags(doc, view, tag_types[labels["tag"]], runs, labels["offset"], labels["rotation"])
         t2.Commit()
     except Exception as ex:
         if t2.HasStarted() and not t2.HasEnded():
@@ -410,10 +436,14 @@ if labels:
     if label_err:
         output.print_md("**Labels not placed** (the marks were written): " + SR.html(label_err))
     elif placed:
-        output.print_md("Labels in view '{}': one per pile, {} new, {} moved{}; tag '{}', {} mm from the pile edge, {}.".format(
+        output.print_md("Labels in view '{}': one per pile, {} new, {} moved{}; {} '{}', {} mm from the pile edge, {}.".format(
             SR.html(view.Name), placed["new"], placed["moved"],
-            ", {} second label{} removed".format(placed["removed"], "" if placed["removed"] == 1 else "s") if placed["removed"] else "",
-            SR.html(labels["tag"]), SD.fmt_num(labels["offset"]), rotation_text(labels["rotation"])))
+            ", {} old label{} removed".format(placed["removed"], "" if placed["removed"] == 1 else "s") if placed["removed"] else "",
+            "Generic Annotation" if labels["param"] else "tag", SR.html(labels["tag"]), SD.fmt_num(labels["offset"]),
+            rotation_text(labels["rotation"])))
+        if labels["param"]:
+            output.print_md("The numbers are copied into the annotations' parameter '{}': they do not follow later Mark "
+                            "changes, so run Number again after renumbering.".format(SR.html(labels["param"])))
         if placed["flipped"] or placed["nudged"] or placed["turned"]:
             output.print_md("To keep every label clear of the others: {} on the other side of the wall, {} nudged slightly{}."
                             .format(placed["flipped"], placed["nudged"],

@@ -10,6 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pyRevit", "SBP.extension", "lib"))
 import sbp_geom as G
+import sbp_data as SD
 
 D, S = 1200.0, 900.0
 
@@ -232,6 +233,16 @@ def test_inside_sign():
     assert G.inside_sign([(0, 0), (5, 0), (10, 0)], False) == 1        # straight, no data: left
 
 
+def test_unturned_size():
+    w, h = 1200.0, 500.0
+    for deg in (0, 20, 90, 120, -30):
+        a = math.radians(deg)
+        c, s = abs(math.cos(a)), abs(math.sin(a))
+        got = G.unturned_size(w * c + h * s, w * s + h * c, a)            # the box of a text turned by deg
+        assert abs(got[0] - w) < 1e-6 and abs(got[1] - h) < 1e-6, (deg, got)
+    assert G.unturned_size(1202.0, 1202.0, math.radians(45)) == (1202.0, 1202.0)   # 45 deg: keep the box
+
+
 def test_readable_angle():
     for deg, want in ((0, 0), (90, 90), (-90, 90), (180, 0), (135, -45), (-135, 45), (270, 90)):
         got = math.degrees(G.readable_angle(math.radians(deg)))
@@ -280,6 +291,357 @@ def test_labels_arc_concave_side():
     for mode in ("horizontal", "along"):
         res = label_run(pts, False, 1, mode)
         assert all(r[4] for r in res), mode
+
+
+# ---------------------------------------------------------------- v2 layout (Akash's drawing: 1500 at 2000)
+def arc(r, a0, a1, step=100.0):
+    n = max(2, int(math.ceil(abs(a1 - a0) * r / step)) + 1)
+    sg = 1 if a1 > a0 else -1
+    ang = [a0 + (a1 - a0) * k / (n - 1.0) for k in range(n)]
+    return [([(r * math.cos(a), r * math.sin(a)) for a in ang], [(-sg * math.sin(a), sg * math.cos(a)) for a in ang])]
+
+
+def v2(samples, closed, pick, dh=1500.0, ds=1500.0, hh=2000.0, gap=150.0, st="HARD", et="HARD"):
+    """SBP Wall's v2 steps (sbp_revit.plan_wall) on test lines: (centres, kinds, info, check, line, dist)."""
+    s, web = hh / 2.0, min(200.0, hh - dh)
+    dist = gap + max(dh, ds) / 2.0
+    side = G.pick_side(samples, pick)
+    path = G.offset_path(samples, closed, side, dist, sharp_deg=G.CORNER_MAX_DEG)
+    w = int(math.ceil(4 * math.pi * dist / 100.0)) + 20
+    path = G.remove_loops(path, w)
+    if closed:
+        h = len(path) // 2
+        path = G.remove_loops(path[h:] + path[:h], w)
+    corners, skipped = G.find_corners(path, G.chain_joints(samples, closed), side, dist)
+    line = [(a, b) for pts, tans in samples for a, b in zip(pts[:-1], pts[1:])]
+    c, k, info = G.layout_wall(path, closed, corners, s, dh, ds, web, st, et, line, gap)
+    return c, k, info, G.check_wall(c, k, closed, dh, ds, s, 200.0, line, gap), line, dist
+
+
+def near(a, b, tol=0.5):
+    return abs(a - b) <= tol
+
+
+def test_v2_straight_keeps_1000_and_reduces_at_the_far_end():
+    # drawing panel 3: centre line 13 700 -> 14 gaps, 12 at 1000, the last 2 at 850 (web exactly 200)
+    c, k, info, chk, line, dist = v2(poly([(0, 900), (13700, 900)]), False, (0, 0))
+    g = chk["gaps"]
+    assert len(c) == 15 and k[0] == k[-1] == "HARD" and k.count("HARD") == 8, (len(c), k)
+    assert all(near(x, 1000.0) for x in g[:12]) and all(near(x, 850.0) for x in g[12:]), g
+    assert near(chk["min_web"][0], 200.0) and near(chk["min_cut"][0], 500.0)
+    assert not chk["warnings"] and not chk["errors"]
+
+
+def test_v2_different_diameters():
+    # HARD 1500, SOFT 1200 at HARD to HARD 2000: cutting 350 each side, web 500; exact fit, nothing reduced
+    c, k, info, chk, line, dist = v2(poly([(0, 900), (10000, 900)]), False, (0, 0), ds=1200.0)
+    assert len(c) == 11 and all(near(x, 1000.0) for x in chk["gaps"])
+    assert near(chk["min_cut"][0], 350.0) and near(chk["min_web"][0], 500.0) and not chk["warnings"]
+    assert near(min(G.seg_dist(p, *line[0]) for p in c), 900.0)        # centre line = gap + the bigger radius
+
+
+def test_v2_curve_keeps_the_design_chord():
+    # wall on a 6 m radius curve (line outside it): every c/c is 1000 in a straight line, H-H 1993, web 493
+    c, k, info, chk, line, dist = v2(arc(6900.0, math.radians(0), math.radians(180)), False, (0, 0))
+    g = chk["gaps"]
+    assert all(near(x, 1000.0) for x in g[:12]), g                      # design from the start ...
+    assert all(850.0 - 0.5 <= x < 1000.0 for x in g[12:]), g            # ... the leftover taken at the far end
+    webs = [r[2] for r in chk["soft"][:4]]
+    assert all(near(w, 493.0, 1.0) for w in webs), webs
+    assert near(chk["min_cut"][0], 500.0) and not chk["errors"]
+
+
+def test_v2_corner_option_b_line_inside():
+    # drawing panel 5: 90 deg corner, your line inside: corner SOFT, HARD at 1202, SOFT moved 323, S-H 1000,
+    # web 200, SOFT edge 200 from the line (>= 150)
+    L = 20000.0
+    c, k, info, chk, line, dist = v2(poly([(900, L), (900, 900), (L, 900)]), False, (0, 0))
+    cr = info["corners"][0]
+    assert k[cr["index"]] == "SOFT" and len(info["corners"]) == 1
+    assert near(cr["bend"], 90.0, 1e-6) and near(cr["c"][0], 1202.1) and near(cr["c"][1], 1202.1), cr
+    assert near(cr["move"], 323.0, 1.0) and not cr["limited"] and near(cr["sh"], 1000.0)
+    i = cr["index"]
+    assert near(G.line_dist(c[i], line) - 750.0, 200.0, 1.0)
+    assert near(math.hypot(c[i - 1][0] - c[i + 1][0], c[i - 1][1] - c[i + 1][1]) - 1500.0, 200.0)
+    assert near(chk["min_cut"][0], 500.0) and not chk["errors"]
+
+
+def test_v2_corner_soft_keeps_the_typed_gap_and_never_crosses_the_line():
+    # Akash's rule: the corner SOFT slides inward along the bisector only; its edge keeps the SAME clearance
+    # you type (100 / 150 ...) from the structure line as every other pile, and never crosses to the far side.
+    L = 20000.0
+    Rs = 1500.0 / 2.0
+    for gap in (150.0, 100.0, 50.0):
+        # dist changes with the gap, so keep the line fixed and let the wall sit at its own offset
+        c, k, info, chk, line, dist = v2(poly([(900, L), (900, 900), (L, 900)]), False, (0, 0), gap=gap)
+        cr = info["corners"][0]
+        i = cr["index"]
+        edge = G.line_dist(c[i], line) - Rs
+        assert edge >= gap - 0.5, (gap, edge)                          # clearance respected for any typed gap
+        assert G.line_dist(c[i], line) >= gap + Rs - 0.5               # centre never nearer than gap + radius
+        assert cr["move"] >= 0.0 and not chk["errors"]                 # inward only, and the pile stays legal
+    # when the overlap cannot be reached without breaking the gap, it stops AT the gap (edge == gap) and warns,
+    # instead of crossing the line or being resized
+    c, k, info, chk, line, dist = v2(poly([(760, L), (760, 760), (L, 760)]), False, (0, 0), gap=10.0)
+    cr = info["corners"][0]
+    edge = G.line_dist(c[cr["index"]], line) - Rs
+    assert cr["limited"] and 9.0 <= edge <= 11.0 and cr["sh"] > 1000.5
+    assert any("cutting depth" in t for i, t in chk["warnings"]) and not chk["errors"]
+
+
+def test_v2_corner_option_b_stops_at_the_gap():
+    # same corner with gap 10: the SOFT may only move 315 (edge 10 from the line), so S-H > 1000: WARNING
+    L = 20000.0
+    c, k, info, chk, line, dist = v2(poly([(760, L), (760, 760), (L, 760)]), False, (0, 0), gap=10.0)
+    cr = info["corners"][0]
+    assert cr["limited"] and near(cr["move"], 760.0 * math.sqrt(2) - 760.0, 1.0) and cr["sh"] > 1000.5, cr
+    assert near(G.line_dist(c[cr["index"]], line) - 750.0, 10.0, 0.5)
+    assert any("cutting depth" in t for i, t in chk["warnings"]) and not chk["errors"]
+
+
+def test_v2_corner_line_outside_moves_away_from_the_line():
+    L = 20000.0
+    c, k, info, chk, line, dist = v2(poly([(-900, L), (-900, -900), (L, -900)]), False, (1000, 1000))
+    cr = info["corners"][0]
+    assert near(cr["move"], 323.0, 1.0) and not cr["limited"] and near(cr["sh"], 1000.0)
+    assert near(G.line_dist(c[cr["index"]], line), 900.0 + 323.0 / math.sqrt(2), 1.0)   # further from the line
+
+
+def test_v2_rectangle_loop():
+    # drawing panel 7: centre line 14 304 x 8 404 around a structure: 22 HARD + 22 SOFT, 4 corner SOFT piles
+    W, H = 14304.0, 8404.0
+    c, k, info, chk, line, dist = v2(poly([(900, 900), (W - 900, 900), (W - 900, H - 900), (900, H - 900)],
+                                          closed=True), True, (-500, -500))
+    assert k.count("HARD") == 22 and k.count("SOFT") == 22
+    assert len(info["corners"]) == 4 and all(k[cr["index"]] == "SOFT" for cr in info["corners"])
+    assert all(near(cr["sh"], 1000.0) and near(cr["move"], 323.0, 1.0) for cr in info["corners"])
+    assert near(chk["min_web"][0], 200.0) and near(chk["min_cut"][0], 500.0)
+    assert not chk["warnings"] and not chk["errors"]
+    assert sum(1 for g in chk["gaps"] if g < 999.5) == 2                 # one reduced gap on each long side
+
+
+def test_v2_small_bend_needs_nothing():
+    # 30 deg: HARD piles stay at 1000 from the corner SOFT, no move, web 2 x 1000 x cos 15 - 1500 = 432
+    b = math.radians(30)
+    c, k, info, chk, line, dist = v2(poly([(0, 0), (8000, 0), (8000 + 8000 * math.cos(b), 8000 * math.sin(b))]),
+                                     False, (4000, -1000))
+    cr = info["corners"][0]
+    assert near(cr["c"][0], 1000.0) and cr["move"] == 0.0 and near(cr["sh"], 1000.0)
+    i = cr["index"]
+    assert near(math.hypot(c[i - 1][0] - c[i + 1][0], c[i - 1][1] - c[i + 1][1]) - 1500.0, 431.9, 0.5)
+    assert not chk["errors"] and not chk["warnings"]
+
+
+def test_v2_bend_under_5_deg_is_not_a_corner():
+    b = math.radians(4)
+    c, k, info, chk, line, dist = v2(poly([(0, 0), (8000, 0), (8000 + 8000 * math.cos(b), 8000 * math.sin(b))]),
+                                     False, (4000, -1000))
+    assert info["corners"] == [] and not chk["errors"]
+
+
+def test_v2_short_leg_low_web_is_a_warning_not_an_error():
+    # 90 deg corner, 6 m legs: after the corner HARD (1202) 4 798 is left: 6 gaps of 800 (web 99) are the only fit
+    # that keeps the overlap: WARNING, placed
+    c, k, info, chk, line, dist = v2(poly([(900, 6000), (900, 900), (6000, 900)]), False, (0, 0))
+    assert info["low_web_runs"] == 2 and not chk["errors"]
+    assert chk["warnings"] and all("web" in t for i, t in chk["warnings"])
+    assert near(chk["min_cut"][0], 500.0)                              # the overlap is never less than design
+
+
+def test_v2_jog_drops_a_corner():
+    # two 90 deg corners 1 m apart: too short for the corner rule, one corner is dropped and reported
+    c, k, info, chk, line, dist = v2(poly([(0, 0), (6000, 0), (6000, 1000), (12000, 1000)]), False, (3000, -2000))
+    assert len(info["dropped"]) == 1 and len(info["corners"]) == 1
+    assert k[0] == k[-1] == "HARD" and not any("next to each other" in t for i, t in chk["errors"])
+
+
+def test_v2_circle_is_divided_equally():
+    n = 629
+    samples = [([(10000 * math.cos(2 * math.pi * i / n), 10000 * math.sin(2 * math.pi * i / n)) for i in range(n)],
+                [(-math.sin(2 * math.pi * i / n), math.cos(2 * math.pi * i / n)) for i in range(n)])]
+    c, k, info, chk, line, dist = v2(samples, True, (20000, 0))
+    assert info["equal"] is not None and len(c) % 2 == 0 and not info["corners"]
+    assert max(chk["gaps"]) <= 1000.0 and not chk["errors"]
+
+
+def test_check_wall_finds_errors():
+    # HARD piles 1400 apart (web -100), a SOFT not reaching its HARD, two SOFT next to each other
+    c = [(0, 0), (700, 0), (1400, 0), (2900, 0), (4400, 0)]
+    chk = G.check_wall(c, ["HARD", "SOFT", "HARD", "SOFT", "SOFT"], False, 1500.0, 1500.0, 1000.0)
+    txt = " / ".join(t for i, t in chk["errors"])
+    assert "HARD piles cut each other" in txt and "not cut" in txt and "next to each other" in txt, txt
+
+
+# ---------------------------------------------------------------- v3: closing zone (Akash, 6 Oct)
+ES3 = [(0.0, 14618.0), (11223.0, 14618.0), (11223.0, 0.0), (0.0, 0.0)]   # centre line measured from his drawing
+
+
+def _gaps(c, closed):
+    n = len(c)
+    return [math.hypot(c[(i + 1) % n][0] - c[i][0], c[(i + 1) % n][1] - c[i][1]) for i in range(n if closed else n - 1)]
+
+
+def _v3_rules(c, k, info, closed, s=S, d=D, web=200.0):
+    """Every gap is exactly s except the closing zone's 2N equal gaps; types alternate; a clean choice has no error."""
+    g = _gaps(c, closed)
+    cl = info["close"]
+    changed = [i for i, x in enumerate(g) if abs(x - s) > 0.01]
+    if cl["way"] in ("exact", "short"):
+        assert not changed, changed
+    elif cl["way"] != "equal":
+        zone = list(range(cl["first"], cl["first"] + 2 * cl["n"]))
+        assert changed == zone, (changed, zone)
+        assert max(g[i] for i in zone) - min(g[i] for i in zone) < 0.01
+    n = len(k)
+    assert all(k[i] != k[(i + 1) % n] for i in range(n if closed else n - 1))
+    if closed:
+        assert n % 2 == 0 and k[0] == "HARD"
+    chk = G.check_wall(c, k, closed, d, d, s, web)
+    if cl["clean"]:
+        assert not chk["errors"] and not chk["warnings"], (chk["errors"], chk["warnings"])
+    return chk
+
+
+def test_v3_es3_loop_closes_in_4_bays():
+    c, k, info = G.layout_closing(ES3, True, S, D, D, 200.0, 3, tiny=10.0)
+    cl = info["close"]
+    _v3_rules(c, k, info, True)
+    assert len(c) == 58 and k.count("HARD") == 29, len(c)
+    assert cl["n"] == 4 and cl["way"] == "shrink" and cl["clean"], cl
+    assert abs(2 * cl["gap"] - 1439.7) < 0.5, cl["gap"]
+    tried = dict(((n, w), ok) for n, w, g, ok in cl["tried"])
+    assert not tried[(1, "shrink")] and not tried[(3, "shrink")] and tried[(4, "shrink")], cl["tried"]
+
+
+def test_v3_loop_start_corner_stays_exact():
+    c, k, info = G.layout_closing(ES3, True, S, D, D, 200.0, 3, tiny=10.0)
+    g = _gaps(c, True)
+    assert c[0] == ES3[0] and k[0] == "HARD"
+    assert all(abs(x - S) < 0.01 for x in (g[-1], g[-2], g[0], g[1])), (g[-2:], g[:2])
+
+
+def test_v3_open_free_end_case1_stops_at_the_last_design_hard():
+    # 12.9 m: design piles at 0, 900 ... 12600; the one at 12600 is HARD -> no adjustment, 300 of line left
+    c, k, info = G.layout_closing([(0.0, 0.0), (12900.0, 0.0)], False, S, D, D, 200.0, 3, free_end=True, tiny=10.0)
+    _v3_rules(c, k, info, False)
+    assert info["close"]["way"] == "short" and len(c) == 15 and k[-1] == "HARD", info["close"]
+    assert abs(info["close"]["left"] - 300.0) < 0.01 and c[-1] == (12600.0, 0.0)
+
+
+def test_v3_open_free_end_case2_shortens_the_last_soft():
+    # 12.2 m: the last design pile that fits (at 11700) would be SOFT -> end HARD on the line end, 1 bay shortened
+    c, k, info = G.layout_closing([(0.0, 0.0), (12200.0, 0.0)], False, S, D, D, 200.0, 3, free_end=True, tiny=10.0)
+    _v3_rules(c, k, info, False)
+    cl = info["close"]
+    assert cl["n"] == 1 and cl["way"] == "shrink" and c[-1] == (12200.0, 0.0) and k[-1] == "HARD", cl
+    assert abs(2 * cl["gap"] - 1400.0) < 0.01                       # 900 + 500 left: web 200
+    # 12.0 m: only 300 left after the SOFT -> 1 bay would be H-H 1200 (web 0) -> 3 bays of 1600
+    c, k, info = G.layout_closing([(0.0, 0.0), (12000.0, 0.0)], False, S, D, D, 200.0, 3, free_end=True, tiny=10.0)
+    _v3_rules(c, k, info, False)
+    assert info["close"]["n"] == 3 and abs(2 * info["close"]["gap"] - 1600.0) < 0.01, info["close"]
+
+
+def test_v3_joined_end_stays_on_the_line_end():
+    c, k, info = G.layout_closing([(0.0, 0.0), (12900.0, 0.0)], False, S, D, D, 200.0, 3, "HARD", "SOFT")
+    _v3_rules(c, k, info, False)
+    assert k[-1] == "SOFT" and c[-1] == (12900.0, 0.0)
+
+
+def test_v3_exact_fit_changes_nothing():
+    c, k, info = G.layout_closing([(0.0, 0.0), (10800.0, 0.0)], False, S, D, D, 200.0, 3, free_end=True)
+    _v3_rules(c, k, info, False)
+    assert info["close"]["way"] in ("exact", "short") and len(c) == 13 and c[-1] == (10800.0, 0.0)
+
+
+def test_v3_loop_within_10_mm_is_not_adjusted():
+    # loops of growing length: one whose seam bay misses the design by 10 mm or less is spread over that bay only
+    for x in range(0, 1800, 2):
+        L = 16000.0 + x
+        c, k, info = G.layout_closing([(0.0, 0.0), (L, 0.0), (L, 3000.0), (0.0, 3000.0)], True, S, D, D, 200.0, 3,
+                                      tiny=10.0)
+        cl = info["close"]
+        if cl["way"] == "tiny":
+            assert cl["n"] == 1 and abs(2 * cl["gap"] - 2 * S) <= 10.0 and cl["clean"], cl
+            return
+    raise AssertionError("no loop length in the sweep closed within 10 mm")
+
+
+def test_v3_short_wall_and_no_clean_choice():
+    c, k, info = G.layout_closing([(0.0, 0.0), (3000.0, 0.0)], False, S, D, D, 200.0, 3)
+    assert info["close"]["way"] == "equal" and k[0] == k[-1] == "HARD"
+    assert len(set(round(x, 3) for x in _gaps(c, False))) == 1
+    c, k, info = G.layout_closing([(0.0, 0.0), (12900.0, 0.0)], False, S, D, D, 590.0, 3)   # web 590: no shrink
+    assert not info["close"]["clean"] and info["close"]["way"] == "stretch", info["close"]
+    assert G.check_wall(c, k, False, D, D, S, 200.0)["warnings"]
+
+
+# ---------------------------------------------------------------- every shape (Akash, 7 Oct): c/c tables printed
+def _corners_of(path, closed):
+    """[(length along the line, bend)] for the polyline joints that bend more than 5 deg, and the line's length."""
+    w = G._Walk(list(path) + ([path[0]] if closed else []))
+    n, res = len(path), []
+    for i in (range(n) if closed else range(1, n - 1)):
+        a, b, c = path[i - 1], path[i], path[(i + 1) % n]
+        bend = abs(G.turn_deg(G._unit((b[0] - a[0], b[1] - a[1])), G._unit((c[0] - b[0], c[1] - b[1]))))
+        if bend > 5.0:
+            res.append((w.cum[i], bend))
+    return res, w.total
+
+
+def _shape(name, path, closed, free_end=True):
+    c, k, info = G.layout_closing(path, closed, S, D, D, 200.0, 3, free_end=free_end, tiny=10.0)
+    corners, total = _corners_of(path, closed)
+    bends = G.bay_corners(info["u"], k, closed, total, corners)
+    cl = info["close"]
+    n = len(c)
+    adjusted = set()
+    if cl["first"] is not None and cl["way"] not in ("exact", "short"):
+        adjusted = set(i % n for i in range(cl["first"], cl["first"] + 2 * cl["n"] + 1)
+                       if (closed or i < n) and k[i % n] == "SOFT")
+    rows, cols = SD.bay_table("W", c, k, closed, D, D, S, 200.0, adjusted, bends)
+    print("\n  {}: {} piles ({} H + {} S), line {:.0f}, closing: {}".format(
+        name, n, k.count("HARD"), k.count("SOFT"), total, SD.closing_text(cl)))
+    print("  " + " | ".join(cols))
+    for r in rows:
+        print("  " + " | ".join(r))
+    return c, k, info, rows
+
+
+def test_shape_circle_r5000():
+    circle = [(5000 * math.cos(2 * math.pi * i / 720), 5000 * math.sin(2 * math.pi * i / 720)) for i in range(720)]
+    c, k, info, rows = _shape("circle R5000 (centre line)", circle, True)
+    g = _gaps(c, True)
+    zone = set(range(info["close"]["first"], info["close"]["first"] + 2 * info["close"]["n"]))
+    assert len(c) == 36 and info["close"]["clean"], (len(c), info["close"])
+    assert all(abs(x - S) < 0.05 for i, x in enumerate(g) if i not in zone)        # every normal chord = 900
+    assert not any(r[6] for r in rows)                                                  # no corners on a circle
+
+
+def test_shape_rectangle_10x6_corner_checks():
+    rect = [(0.0, 6000.0), (10000.0, 6000.0), (10000.0, 0.0), (0.0, 0.0)]
+    c, k, info, rows = _shape("rectangle 10 x 6, start on a corner", rect, True)
+    corner_rows = [r for r in rows if r[6]]
+    assert corner_rows and all(r[6] == "90 deg" for r in corner_rows), corner_rows
+    assert any("WARNING: web below 200" in r[7] for r in corner_rows)                  # H06-S06-H07: web 142
+    assert not info["close"]["clean"]                                                    # report tip: start mid-side
+    c, k, info, rows = _shape("rectangle 10 x 6, start mid-side",
+                              [(5000.0, 6000.0)] + rect[1:] + [(0.0, 6000.0)], True)
+    assert info["close"]["clean"]
+
+
+def test_shape_arc_90_open():
+    arc = [(8000 * math.cos(math.pi / 2 * i / 200), 8000 * math.sin(math.pi / 2 * i / 200)) for i in range(201)]
+    c, k, info, rows = _shape("90 deg arc R8000, open", arc, False)
+    assert k[0] == k[-1] == "HARD" and info["close"]["clean"]
+    zone = set()
+    if info["close"]["first"] is not None and info["close"]["way"] not in ("exact", "short"):
+        zone = set(range(info["close"]["first"], info["close"]["first"] + 2 * info["close"]["n"]))
+    assert all(abs(x - S) < 0.05 for i, x in enumerate(_gaps(c, False)) if i not in zone)
+
+
+def test_shape_l_open_chain():
+    c, k, info, rows = _shape("L-shape 8 m + 6 m, open", [(0.0, 0.0), (8000.0, 0.0), (8000.0, 6000.0)], False)
+    assert k[0] == k[-1] == "HARD" and any(r[6] == "90 deg" for r in rows)
 
 
 if __name__ == "__main__":

@@ -35,9 +35,45 @@
 - **SOFT piles are cut by HARD piles** (Join Geometry, HARD cuts): HARD piles keep their full round shape.
 - **Pick Lines** (in the Draw panel): Tab picks a whole chain; finish with Esc twice or Modify. To pick CAD
   lines, turn on Select links / Select pinned elements (bottom right of Revit).
-- Line → SBP centre line = gap + D/2 (default 150 + 600 = 750). Gap min 150.
-- Spacing is measured on the centre line and rounded so the real c/c is never larger than
-  what you entered (overlap never less than design).
+- Line → SBP centre line = gap + the bigger radius (default 150 + 750 = 900 for Ø1500). Gap min 10.
+- **HARD and SOFT pile types** can differ (the SOFT box: "(same as HARD)" or another type). Both diameters are
+  read from the pile types, never assumed.
+- Spacing: the SBP Wall and SBP Edit forms show three linked values; **type any one**, the other two follow from
+  the HARD diameter Dh and SOFT diameter Ds (the SOFT pile sits halfway):
+  | Box | = | Ø1500 / Ø1500 | Ø1500 / SOFT Ø1200 |
+  |---|---|---|---|
+  | c/c HARD to HARD (HH) | typed | 2000 | 2000 |
+  | Cutting depth, each HARD into the SOFT | (Dh + Ds − HH) / 2 | 500 | 350 |
+  | Leftover SOFT web between the HARD edges | HH − Dh | 500 | 500 |
+  HARD to SOFT = HH / 2 is shown in the report. **A cutting depth or web you type wins** (saved per wall): with
+  another pile type, HARD to HARD moves to keep your value. A web below 200 is a WARNING (still placed). Errors:
+  cutting depth 0 or less, HARD piles cutting each other (web below 0), SOFT piles cutting each other.
+- **Pile size:** read fresh every time: the type parameter **Diameter** first, else a test pile's Radius x 2,
+  else the family set-up. The form and the report say where it was read. A type whose name says "1300mm" must
+  have that size.
+- **Starting spacing:** the form fills c/c HARD to HARD = HARD diameter + 600 (1200 -> 1800) when it opens and
+  when you change the HARD type. You can type over it.
+- **Layout (v3, 6-7 Oct), any shape** (straight, chain, arc, circle, spline, open or closed): from the start pile,
+  every next pile is exactly the design HARD to SOFT away in a straight line (chord), also through corners and on
+  curves. Only the end of an open wall or the seam of a loop is adjusted, and only when needed:
+  - Open wall: if the last design pile that fits is HARD, the wall stops there; the small rest of the line stays. If
+    it would be SOFT, the end HARD goes on the line end and the last SOFT bay is shortened (or 3 to 6 bays if one is
+    not enough). An end joined to another wall stays on the line end.
+  - Loop: it starts with a HARD pile where you started drawing. The last bay into it stays exact; the bays just before
+    it take the leftover. A last bay within 10 mm of the design is not adjusted.
+  - Adjusted bays are equal, so each SOFT stays centred. First 1 bay, then the field **Closing SOFT piles (adjust)**
+    (default 3) up to 6, the first that passes every check (web at least 200, cutting depth at least the design one,
+    no same-type overlap). If nothing passes, the closest is used with warnings; for a loop the report suggests
+    starting the line at the middle of a side.
+  Example ES3 (11.2 x 14.6 m, Ø1200, H-H 1800): 4 bays of H-H 1440, 58 piles.
+- Corners: sharp, like AutoCAD OFFSET; the piles fall where the exact c/c puts them and are never moved. Every bay
+  is checked; a low web or overlap across a corner is reported with the pile mark and the corner angle. The report
+  lists every bay (H-S and H-H straight c/c, web, cutting depth, adjusted, corner angle).
+- **Before anything is written**, SBP Wall and SBP Edit show the values they read and worked out per wall
+  (diameters and where they were read, the three spacing values, the closing zone and each adjusted bay by its
+  marks, pile counts, smallest web and cutting depth, warnings by the marks the piles will get) and ask Yes / No.
+- Older walls keep their own layout (before 30 Sep: equal spacing; 30 Sep to 6 Oct: v2 corner rule) until they are
+  rebuilt; any rebuild uses v3.
 - **Free end** of an open wall = HARD. **An end that touches another SBP wall** continues its pattern:
   - if that wall's pile already sits at the joint, the new wall starts from it (no pile placed
     twice), and the next pile is the other type;
@@ -51,8 +87,13 @@
   walls of the same level. **Continue** carries on from the highest existing mark with that prefix on the
   same level (the walls being numbered are not counted). **Start new** begins at 1. Marks already used by
   other piles are listed before you confirm (Revit reports them as duplicate Mark warnings).
-- **Number labels** (tags in the current plan view): tag type (a Structural Foundation tag that shows Mark, or
-  "No labels"), side per wall (Outside default; closed wall = the loop, open wall: Inside = the side of your drawn
+- **Number labels** (tags in the current plan view): tag type (a tag that shows Mark, or "No labels"). The list
+  shows Structural Foundation tags first, then Multi-Category tags, Generic Model tags and Generic Annotations
+  (the category is shown after the name). Each one is test-placed on a pile first (undone at once): a type Revit
+  cannot use says why and how to fix the family, and Next stays off. A **Generic Annotation** works as a copy:
+  one annotation per pile with the pile's Mark written into its text parameter (named in the dialog). It does not
+  follow later Mark changes (run Number again), and an SBP Edit rebuild removes the wall's annotations. Fix: open the tag family, Family Category and Parameters > Structural Foundation Tags (or
+  Multi-Category Tags), save, load it again; side per wall (Outside default; closed wall = the loop, open wall: Inside = the side of your drawn
   line), offset from the pile edge (default **50 mm**, just clear), rotation (default **Fixed 0 = horizontal**, reads
   left to right in the view; or Along / Across the wall; never upside down).
   **One label per pile**, next to its own pile, never stacked in rows and never overlapping: a label that would
@@ -64,7 +105,15 @@
   Number again. Cut-off / Toe changes keep them.
 - Cut-off Level → Height Offset From Level. Toe Level → Depth. Values are in the same datum
   as "Elevation at Top" in Properties.
-- Diameter comes from the pile TYPE (Radius x 2). For another diameter, make a new type.
+- Diameters come from the pile TYPES (Radius x 2). For another diameter, make a new type.
+- **Any pile family works** (another drafter's own family too). The pile type list shows ICSPL_Pile types by name
+  and other families as "Type (Family)": every Structural Foundation family that is set up, recognised as a pile
+  (a Diameter / Pile Dia / Radius parameter), or has "pile" in its name. Its parameters are recognised by name
+  (size: Diameter / Pile Dia / Radius ...; toe: Depth / Length / Pile Length ...; cut-off: Height Offset From
+  Level / Offset ...). If one is not recognised, SBP Wall asks once which parameter it is and saves the answer
+  in the model, so the whole team gets it. **Shift+Click on SBP Wall** = pile family set-up: set up a family that
+  is not listed, or correct a set-up. After placing, the tool reads Top / Bottom back; if a family does not follow
+  the asked Cut-off / Toe, nothing is placed and it says so.
 - **Typed pile data** (Loading, BH Ref, SPTN, GEO/PDS ...) is copied after a rebuild to the
   nearest new pile of the same type. The report lists data that moved more than half a c/c,
   and data that could not be copied. X-Easting / Y-Northing are never copied.

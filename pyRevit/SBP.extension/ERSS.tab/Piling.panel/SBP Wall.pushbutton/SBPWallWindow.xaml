@@ -1,0 +1,126 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SBP Wall settings" Width="800" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="False" FontSize="13">
+    <StackPanel>
+        <TabControl x:Name="main_tabs">
+
+            <!-- ============================================================ Tab 1: Settings -->
+            <TabItem Header="  Settings  ">
+                <StackPanel Margin="16,12,16,8">
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="260"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Wall name (marks e.g. SBP1-H001):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="wall_tb" Grid.Row="0" Grid.Column="1" Margin="0,3" Padding="4,3"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="HARD pile type:" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="hard_cb" Grid.Row="1" Grid.Column="1" Margin="0,3" SelectionChanged="type_changed"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="SOFT pile type:" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="soft_cb" Grid.Row="2" Grid.Column="1" Margin="0,3" SelectionChanged="type_changed"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Placement level:" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="level_cb" Grid.Row="3" Grid.Column="1" Margin="0,3"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,8"/>
+                    <TextBlock Text="Spacing: type ANY ONE. HARD to HARD sets cutting depth and leftover web; type a cutting depth or web to set HARD to HARD instead."
+                               TextWrapping="Wrap" Foreground="#555555" Margin="0,0,0,6"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="260"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="c/c HARD to HARD (mm):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="hh_tb" Grid.Row="0" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="hh_changed"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Cutting depth, each side (mm):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="cut_tb" Grid.Row="1" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="cut_changed"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Leftover SOFT web (mm):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="web_tb" Grid.Row="2" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="web_changed"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Closing SOFT piles (adjust, 1-6):" VerticalAlignment="Center"
+                                   ToolTip="Only the last bays of the wall (before its end, or before the start of a loop) take the leftover length. Every other bay keeps the exact c/c."/>
+                        <TextBox x:Name="close_tb" Grid.Row="3" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="levels_changed"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="260"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Gap: line to SBP inner edge (mm, min 10):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="gap_tb" Grid.Row="0" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Cut-off Level (mm):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="cutoff_tb" Grid.Row="1" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="levels_changed"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Toe Level - HARD pile (mm):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="toe_hard_tb" Grid.Row="2" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="levels_changed"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Toe Level - SOFT (mm, blank = same):" VerticalAlignment="Center"/>
+                        <TextBox x:Name="toe_soft_tb" Grid.Row="3" Grid.Column="1" Margin="0,3" Padding="4,3" Width="110"
+                                 HorizontalAlignment="Left" TextChanged="levels_changed"/>
+                    </Grid>
+                    <CheckBox x:Name="invisible_cb" Margin="0,10,0,0" IsChecked="True"
+                              Content="Make my line &lt;Invisible lines&gt; (like Defpoints)"/>
+
+                    <Border Background="#FFF6E5" BorderBrush="#E8C27A" BorderThickness="1" CornerRadius="3"
+                            Padding="10,8" Margin="0,12,0,4">
+                        <TextBlock x:Name="live_tb" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12.5"/>
+                    </Border>
+                </StackPanel>
+            </TabItem>
+
+            <!-- ============================================================ Tab 2: Preview -->
+            <TabItem Header="  Preview  ">
+                <StackPanel Margin="16,12,16,8">
+                    <TextBlock x:Name="preview_info_tb" Margin="0,0,0,6" Foreground="#555555"
+                               TextWrapping="Wrap" FontSize="12"
+                               Text="Type spacing values on the Settings tab to see the pile pattern."/>
+                    <Border BorderBrush="#BBBBBB" BorderThickness="1" Background="White">
+                        <Canvas x:Name="preview_canvas" Width="756" Height="220" Background="White"/>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                        <Button x:Name="play_btn" Content="Play" Width="100" Padding="0,4"
+                                Margin="0,0,10,0" Click="play_click"/>
+                        <TextBlock x:Name="anim_info_tb" VerticalAlignment="Center"
+                                   Foreground="#555555" FontSize="12" Text=""/>
+                    </StackPanel>
+                </StackPanel>
+            </TabItem>
+
+        </TabControl>
+
+        <!-- Footer: note + OK / Cancel (outside the tabs, always visible) -->
+        <TextBlock Margin="16,4,16,4" TextWrapping="Wrap" Foreground="#555555" FontSize="12"
+                   Text="Nothing is placed yet: after you click the wall side, the values are shown once more to confirm."/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,16,14">
+            <Button x:Name="ok_btn" Content="Next: click the wall side" Width="180" Margin="0,0,8,0"
+                    IsDefault="True" Click="ok_click"/>
+            <Button Content="Cancel" Width="90" IsCancel="True" Click="cancel_click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
